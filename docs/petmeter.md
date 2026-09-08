@@ -57,9 +57,30 @@ Two sources, in preference order:
    `~/.codex/auth.json`. Live, one request. **Undocumented** — it is what the
    Codex CLI and CodexBar use, and it can change without notice, which is why
    (2) is not optional.
+
+   **It is also slow.** Healthy calls measure 3–4s, and during a degraded spell
+   6 of 8 attempts exceeded a 10s timeout. `HTTP_TIMEOUT` is 25s for that
+   reason: a short timeout here does not fail fast, it silently promotes the
+   fallback.
 2. The `rate_limits` object the CLI records into its session rollout JSONL
    under `~/.codex/sessions`. No network, but only as fresh as your last
-   Codex session — reported honestly via `UsageSnapshot.stale_seconds`.
+   Codex session — reported via `UsageSnapshot.stale_seconds`.
+
+   **The fallback rides out a brief outage; it does not stand in for live
+   data.** Two guards, both added after it put a wrong number on the device:
+   a record whose window has already reset is dropped, since its percentage
+   describes an accounting period that no longer exists; and a record older
+   than `MAX_LOG_AGE_S` (1 hour) is refused outright.
+
+   The failure it prevents: with the endpoint timing out, a 16-hour-old record
+   reported **69%** of a weekly window that had since shifted, while the account
+   was at **10%** of a fresh one — and nothing in the wire format marked it
+   stale, so it rendered exactly like a live reading. A blank panel is
+   recoverable; a confidently wrong one is not.
+
+   The deeper fix is still open: `stale_seconds` never reaches the device, so
+   the UI cannot distinguish live from cached at all. Until it does, refusing
+   stale data is the only honest option.
 
 **The trap in this data:** account limits and per-model limits sit side by
 side. A Codex Pro account meters one account-wide weekly window — no 5-hour
