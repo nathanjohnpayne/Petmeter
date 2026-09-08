@@ -41,12 +41,23 @@ from . import UsageSnapshot, Window, WINDOW_5H, WINDOW_7D
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_CODEX_DIR = Path(os.path.expanduser("~/.codex"))
-HTTP_TIMEOUT = 10.0
+# The endpoint is slow even when healthy -- successful calls measured at 3-4s,
+# and during a degraded spell 6 of 8 attempts exceeded 10s. A short timeout
+# there does not fail fast, it just hands the poll to the stale-log fallback.
+HTTP_TIMEOUT = 25.0
 
 # The account-level bucket, as named in the rollout logs. Anything else
 # ("codex_bengalfox", ...) is a per-model limit and must not be read as the
 # plan limit.
 ACCOUNT_LIMIT_ID = "codex"
+
+# How old a rollout record may be and still stand in for a live reading. The
+# fallback exists to ride out a brief endpoint outage, not to keep yesterday's
+# number on screen: a 16-hour-old record reported 69% of a weekly window while
+# the live endpoint said 10%, because usage moved on and the window shifted
+# underneath it. Beyond this, report nothing and let the device say "no data" --
+# a blank panel is recoverable, a confidently wrong number is not.
+MAX_LOG_AGE_S = 3600
 
 # limit_window_seconds (endpoint) and window_minutes (logs) -> window label.
 WINDOW_BY_SECONDS = {18000: WINDOW_5H, 604800: WINDOW_7D}
@@ -177,6 +188,8 @@ def collect_via_logs(codex_dir: Path = DEFAULT_CODEX_DIR) -> UsageSnapshot | Non
 
     now = time.time()
     for path in files:
+        if now - path.stat().st_mtime > MAX_LOG_AGE_S:
+            break            # sorted newest-first: everything after is older
         rl = _account_rate_limits(path)
         if not rl:
             continue
@@ -190,6 +203,13 @@ def collect_via_logs(codex_dir: Path = DEFAULT_CODEX_DIR) -> UsageSnapshot | Non
             if label is None:
                 continue
             resets_at = w.get("resets_at")
+            # A record whose window has already reset describes a window that
+            # no longer exists. Its percentage is not merely stale, it is about
+            # a different accounting period -- exactly the case that reported
+            # 69% of a spent week while the live endpoint said 10% of a fresh
+            # one. Drop it rather than carry it forward.
+            if resets_at and resets_at <= now:
+                continue
             windows[label] = Window(
                 used_percent=float(w.get("used_percent") or 0.0),
                 resets_in=int(resets_at - now) if resets_at else None,

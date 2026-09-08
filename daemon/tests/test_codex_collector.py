@@ -291,3 +291,49 @@ def test_codex_survives_a_dead_claude_token(monkeypatch):
         beat["x"] = codex
     assert beat["ok"] is False          # Claude mode still says "No data"
     assert beat["x"]["w"] == 85         # Codex mode stays live
+
+
+def test_expired_log_window_is_not_carried_forward(tmp_path):
+    """A record whose window already reset describes a different period.
+
+    Observed live: the endpoint was timing out, the fallback served a record
+    from before the weekly rollover, and the device showed 69% of a spent week
+    while the account was actually 10% into a fresh one.
+    """
+    import time
+    past = {
+        "limit_id": "codex", "plan_type": "pro",
+        "primary": {"used_percent": 69.0, "window_minutes": 10080,
+                    "resets_at": int(time.time()) - 60},   # already reset
+        "secondary": None,
+    }
+    _rollout(tmp_path, past)
+    assert collect_via_logs(tmp_path) is None
+
+
+def test_live_log_window_still_used(tmp_path):
+    """The guard must not reject a record whose window is genuinely open."""
+    import time
+    live = {
+        "limit_id": "codex", "plan_type": "pro",
+        "primary": {"used_percent": 22.0, "window_minutes": 10080,
+                    "resets_at": int(time.time()) + 3600},
+        "secondary": None,
+    }
+    _rollout(tmp_path, live)
+    snap = collect_via_logs(tmp_path)
+    assert snap is not None and snap.windows[WINDOW_7D].used_percent == 22.0
+
+
+def test_stale_log_record_is_refused(tmp_path):
+    """16-hour-old records reported 69% while the live endpoint said 10%.
+
+    The fallback rides out a brief outage; it does not keep yesterday's number
+    on screen. A blank panel is recoverable, a confidently wrong one is not.
+    """
+    import os, time
+    from daemon.collectors.codex import MAX_LOG_AGE_S
+    path = _rollout(tmp_path, ACCOUNT)
+    old = time.time() - (MAX_LOG_AGE_S + 600)
+    os.utime(path, (old, old))
+    assert collect_via_logs(tmp_path) is None
