@@ -46,14 +46,28 @@ ATTEMPTS = 3
 RETRY_WAIT = 3         # seconds before a retry, times the attempt just made
 
 
+def _body(resp) -> str:
+    """Read what the device said, and settle for the status if it cannot.
+
+    A status line is the device's answer even when the body behind it arrives
+    cut short, so the read is not allowed to take the answer down with it --
+    a write that already returned 200 has been written, and throwing that away
+    to ask again would undo it and write it a second time for nothing.
+    """
+    try:
+        return resp.read().decode(errors="replace")
+    except (OSError, http.client.HTTPException) as exc:
+        return f"(body cut short: {exc})"
+
+
 def _died_on_the_wire(exc: BaseException) -> bool:
     """True when a call was never answered, rather than answered unhappily.
 
-    urllib reports a timeout either directly or wrapped in a URLError,
-    depending on whether it fell over connecting or mid-response. A response
-    cut short after its headers is not an OSError at all -- it surfaces as
-    http.client.IncompleteRead, which would otherwise walk straight past a
-    retry meant for exactly that.
+    This only ever sees calls that produced no status line at all; a body
+    that failed after one is `_body`'s business, not a death. urllib reports a
+    timeout either directly or wrapped in a URLError, depending on whether it
+    fell over connecting or mid-response, and a reply too mangled to parse a
+    status out of is an http.client exception rather than an OSError.
     """
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
     if isinstance(reason, ConnectionError):
@@ -82,16 +96,10 @@ def _call(base: str, path: str, params: dict, data: bytes | None = None,
             req.add_header("Content-Type", "application/octet-stream")
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-                return resp.status, resp.read().decode(errors="replace")
+                return resp.status, _body(resp)
         except urllib.error.HTTPError as e:
             # An answer, just an unhappy one. Repeating it changes nothing.
-            # Its body can still arrive cut short, and an exception raised in
-            # here is past the reach of the clause below, so the status -- the
-            # part worth having -- is kept whatever the body does.
-            try:
-                return e.code, e.read().decode(errors="replace")
-            except (OSError, http.client.HTTPException) as body_exc:
-                return e.code, f"(body cut short: {body_exc})"
+            return e.code, _body(e)
         except (OSError, http.client.HTTPException) as exc:
             if not _died_on_the_wire(exc):
                 raise
