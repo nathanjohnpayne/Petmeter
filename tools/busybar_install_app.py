@@ -14,6 +14,7 @@ under a firmware update. If the app stops appearing after one, compare
 against `app.busy.js_example` again, which ships with the firmware and will
 have moved with it.
 """
+import http.client
 import socket
 import sys
 import time
@@ -45,14 +46,18 @@ ATTEMPTS = 3
 RETRY_WAIT = 3         # seconds before a retry, times the attempt just made
 
 
-def _died_on_the_wire(exc: OSError) -> bool:
+def _died_on_the_wire(exc: BaseException) -> bool:
     """True when a call was never answered, rather than answered unhappily.
 
     urllib reports a timeout either directly or wrapped in a URLError,
-    depending on whether it fell over connecting or mid-response.
+    depending on whether it fell over connecting or mid-response. A response
+    cut short after its headers is not an OSError at all -- it surfaces as
+    http.client.IncompleteRead, which would otherwise walk straight past a
+    retry meant for exactly that.
     """
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
-    return isinstance(reason, (TimeoutError, ConnectionResetError))
+    return isinstance(reason, (TimeoutError, ConnectionResetError,
+                               http.client.HTTPException))
 
 
 def _call(base: str, path: str, params: dict, data: bytes | None = None,
@@ -76,7 +81,7 @@ def _call(base: str, path: str, params: dict, data: bytes | None = None,
         except urllib.error.HTTPError as e:
             # An answer, just an unhappy one. Repeating it changes nothing.
             return e.code, e.read().decode(errors="replace")
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             if not _died_on_the_wire(exc):
                 raise
             if attempt == attempts:
