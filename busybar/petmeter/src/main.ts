@@ -147,15 +147,68 @@ function tombstone(id: string, type: "text" | "rectangle" | "image"): Element {
 }
 
 /** Fills in whatever the frame left out, so nothing lingers from the last card. */
+/**
+ * TOMBSTONE ONLY WHAT IS ACTUALLY ON SCREEN.
+ *
+ * Every frame used to name all twenty ids, so a six-element card shipped
+ * twelve tombstones with it. That is not free on this device: building an
+ * eighteen-element frame costs about two seconds of JerryScript and the
+ * device takes another second or so to accept it, which is most of the delay
+ * between pressing a button and the pixels changing.
+ *
+ * An id only needs removing if it is displayed, and the only ids displayed
+ * are the ones the last frame drew. Tracking that turns the usual case --
+ * one card replacing a similar card -- into almost no tombstones at all.
+ *
+ * The tombstones themselves are built once. They never vary by frame, and
+ * allocating twelve fresh objects with a spread apiece, every frame, was
+ * paying for the same result repeatedly.
+ *
+ * A periodic full sweep is the safety net. `onScreen` is this app's belief
+ * about the canvas, and a belief can be wrong -- another app can draw, and a
+ * previous run of this one can leave elements behind (which is why startup
+ * clears the canvas outright). The sweep bounds how long anything unexpected
+ * can survive, at the cost of one expensive frame in every SWEEP_EVERY.
+ */
+const TOMBSTONES: Record<string, Element> = {};
+for (const pair of IDS) TOMBSTONES[pair[0]] = tombstone(pair[0], pair[1]);
+
+const SWEEP_EVERY = 20;
+let sweepIn = 0;
+// Transient by construction: the device removes them when their timeout
+// lapses, so this app must not believe they are still there.
+const SELF_CLEARING: Record<string, boolean> = { tmask: true, ttext: true };
+let onScreen: Record<string, boolean> = {};
+
 function complete(used: Element[]): Element[] {
   const seen: Record<string, boolean> = {};
   for (const el of used) seen[el.id as string] = true;
+
   const out = used.slice();
+  const sweep = sweepIn <= 0;
+  sweepIn = sweep ? SWEEP_EVERY : sweepIn - 1;
+
   for (const pair of IDS) {
-    if (pair[0] === "tmask" || pair[0] === "ttext") continue;  // transient
-    if (!seen[pair[0]]) out.push(tombstone(pair[0], pair[1]));
+    const id = pair[0];
+    if (SELF_CLEARING[id] || seen[id]) continue;
+    if (sweep || onScreen[id]) out.push(TOMBSTONES[id]);
   }
+
+  // Rebuilt rather than edited in place: what is on screen after this frame
+  // is exactly what this frame drew, and mutating the object being iterated
+  // is a way to be clever and wrong.
+  const next: Record<string, boolean> = {};
+  for (const id in seen) {
+    if (!SELF_CLEARING[id]) next[id] = true;
+  }
+  onScreen = next;
   return out;
+}
+
+/** Forget what is on screen, after something else has cleared it. */
+function forgetCanvas(): void {
+  onScreen = {};
+  sweepIn = 0;
 }
 
 function largeWidth(text: string): number {
@@ -501,6 +554,7 @@ async function clearCanvas(): Promise<void> {
       method: "DELETE",
     }),
   );
+  forgetCanvas();
 }
 
 let lastError = "";

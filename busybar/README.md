@@ -423,6 +423,17 @@ hollow cell has no hole left, so the cells are dropped rather than lie.
 for two seconds with `timeout: 2`, and the device deletes it itself — no second
 request and no state to unwind.
 
-**Every frame names every element id**, unused ones as tombstones. Draws merge
-by id, so anything left unnamed stays on screen — including elements from an
-older build, which is why the app clears its canvas once at startup.
+**Draws merge by id**, so anything left unnamed stays on screen — including
+elements from an older build, which is why the app clears its canvas once at
+startup.
+
+Every frame used to name all twenty ids, unused ones as tombstones, which put
+eighteen elements on the wire for a card that draws four. That was not free:
+on the device the JSON alone cost ~500 ms to build and the bar another ~1 s to
+accept, and the redraw cycle ran about 7 s where the 3 s long poll should set
+the pace. An id only needs removing if it is displayed, and the only displayed
+ids are the ones the last frame drew — so the app tracks that and tombstones
+just the difference. Measured on the hardware, both paths in the same tick:
+**18 elements and ~500 ms became 4–8 elements and ~150 ms**, and the cycle came
+down to **3.6–4.1 s**. Every twentieth frame still sweeps the full set, because
+what the app believes is on screen is a belief, and another app can draw too.
