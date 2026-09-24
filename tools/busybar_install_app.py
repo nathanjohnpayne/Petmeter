@@ -122,8 +122,13 @@ def enable_menu(base: str) -> int:
     """
     code, body = _call(base, "/api/storage/write", {"path": MENU_FLAG},
                        data=b"1", method="POST")
-    print(f"menu flag {MENU_FLAG}: {code} {body.strip()}")
-    return 0 if code == 200 else 1
+    # 508 is the device refusing to write over a file already there, which for
+    # a flag is the state being asked for: the menu was enabled on an earlier
+    # run, or a retry is looking at what the attempt before it wrote and never
+    # got to hear about. Either way the flag is set, which is the whole job.
+    print(f"menu flag {MENU_FLAG}: {code} {body.strip()}"
+          + (" (already set)" if code == 508 else ""))
+    return 0 if code in (200, 508) else 1
 
 
 def _upload(base: str, remote: str, blob: bytes) -> tuple[int, str, int]:
@@ -165,6 +170,19 @@ def _upload(base: str, remote: str, blob: bytes) -> tuple[int, str, int]:
         time.sleep(wait)
 
 
+def _gave_up() -> int:
+    """Report a device that has stopped answering, and stop asking.
+
+    Nothing later in the run would go better: every remaining call would spend
+    its own attempts and waits before saying the same thing, which on a tree
+    this size is twenty-odd minutes of repeating a verdict the first exhausted
+    call already reached.
+    """
+    print("\nThe device stopped answering, so the rest was not attempted. "
+          "Check the bar is awake and run this again.")
+    return 1
+
+
 def install(base: str) -> int:
     if not SRC.is_dir():
         print(f"missing source tree: {SRC}")
@@ -176,6 +194,8 @@ def install(base: str) -> int:
         code, body = _call(base, "/api/storage/mkdir", {"path": d}, method="POST")
         # An existing directory is a 400 here, which is success for our purpose.
         print(f"  mkdir {d}: {code}" + ("" if code == 200 else f" {body.strip()}"))
+        if code == 0:
+            return _gave_up()
 
     failures = 0
     for local in sorted(SRC.rglob("*")):
@@ -187,6 +207,8 @@ def install(base: str) -> int:
         suffix = f" in {parts} chunks" if parts > 1 else ""
         print(f"  write {remote} ({len(blob)}B){suffix}: {code}"
               + ("" if code == 200 else f" {body.strip()}"))
+        if code == 0:
+            return _gave_up()
         failures += code != 200
 
     if failures:
@@ -205,8 +227,12 @@ def install(base: str) -> int:
 def remove(base: str) -> int:
     code, body = _call(base, "/api/storage/remove", {"path": REMOTE_ROOT},
                        method="DELETE")
-    print(f"remove {REMOTE_ROOT}: {code} {body.strip()}")
-    return 0 if code == 200 else 1
+    # A 400 is the device saying there is nothing at that path -- again the
+    # state being asked for, and what a retry sees after an attempt whose
+    # answer went missing. The app is gone either way.
+    print(f"remove {REMOTE_ROOT}: {code} {body.strip()}"
+          + (" (nothing there)" if code == 400 else ""))
+    return 0 if code in (200, 400) else 1
 
 
 if __name__ == "__main__":
