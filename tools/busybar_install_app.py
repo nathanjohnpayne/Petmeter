@@ -56,8 +56,13 @@ def _died_on_the_wire(exc: BaseException) -> bool:
     retry meant for exactly that.
     """
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
-    return isinstance(reason, (TimeoutError, ConnectionResetError,
-                               http.client.HTTPException))
+    if isinstance(reason, ConnectionError):
+        # A connection that was made and then broke: reset by the device, or a
+        # pipe that closed while a chunk was still going up, which is the most
+        # likely way an 8 KB write dies. Refused is the one to let through --
+        # that is a wrong address, and repeating it just delays saying so.
+        return not isinstance(reason, ConnectionRefusedError)
+    return isinstance(reason, (TimeoutError, http.client.HTTPException))
 
 
 def _call(base: str, path: str, params: dict, data: bytes | None = None,
@@ -80,7 +85,13 @@ def _call(base: str, path: str, params: dict, data: bytes | None = None,
                 return resp.status, resp.read().decode(errors="replace")
         except urllib.error.HTTPError as e:
             # An answer, just an unhappy one. Repeating it changes nothing.
-            return e.code, e.read().decode(errors="replace")
+            # Its body can still arrive cut short, and an exception raised in
+            # here is past the reach of the clause below, so the status -- the
+            # part worth having -- is kept whatever the body does.
+            try:
+                return e.code, e.read().decode(errors="replace")
+            except (OSError, http.client.HTTPException) as body_exc:
+                return e.code, f"(body cut short: {body_exc})"
         except (OSError, http.client.HTTPException) as exc:
             if not _died_on_the_wire(exc):
                 raise
