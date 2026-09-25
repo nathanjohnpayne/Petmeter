@@ -396,10 +396,7 @@ including the rotation clock, and makes the app a renderer:
 button → input dump → daemon control state → gen++ → long poll returns → app draws
 ```
 
-`GET /usage.json?since=<gen>&wait=8000` holds open until something changes, so
-a press reaches the screen in one round trip rather than waiting out a polling
-interval — and a return with nothing changed is not wasted, because redrawing
-every 8s also restores the frame after anything else clears the canvas.
+`GET /usage.json?since=<gen>&wait=3000` holds open until something changes, so a press reaches the screen in one round trip rather than waiting out a polling interval — and a return with nothing changed is not wasted, because redrawing every 3s also restores the frame after anything else clears the canvas.
 
 | | |
 |---|---|
@@ -517,13 +514,6 @@ request and no state to unwind.
 elements from an older build, which is why the app clears its canvas once at
 startup.
 
-Every frame used to name all twenty ids, unused ones as tombstones, which put
-eighteen elements on the wire for a card that draws four. That was not free:
-on the device the JSON alone cost ~500 ms to build and the bar another ~1 s to
-accept, and the redraw cycle ran about 7 s where the 3 s long poll should set
-the pace. An id only needs removing if it is displayed, and the only displayed
-ids are the ones the last frame drew — so the app tracks that and tombstones
-just the difference. Measured on the hardware, both paths in the same tick:
-**18 elements and ~500 ms became 4–8 elements and ~150 ms**, and the cycle came
-down to **3.6–4.1 s**. Every twentieth frame still sweeps the full set, because
-what the app believes is on screen is a belief, and another app can draw too.
+Every frame used to name all twenty ids, unused ones as tombstones, which put eighteen elements on the wire for a card that draws four. An id only needs removing if it is displayed, and the only displayed ids are the ones the last frame drew — so the app tracks that and tombstones just the difference. Every twentieth frame still sweeps the full set, because what the app believes is on screen is a belief, and another app can draw too.
+
+What that saves is JSON, and nothing else. Measured on the bar, `JSON.stringify` takes 650–850 ms over a sixteen-element sweep and 140–230 ms over a four-element card, while the POST takes 0.4–0.7 s at either size. **The tombstones were never most of the delay:** building a frame takes 1–1.8 s of JerryScript however few elements it has — the same with the app's heap raised to 128 KiB — so a card still lands two to three seconds after its data. Where that time goes is not yet known.

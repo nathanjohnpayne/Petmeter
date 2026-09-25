@@ -127,18 +127,18 @@ const PET_IMAGE: Record<string, string> = {
  *
  * The canvas merges draws by id: an element missing from the next draw stays
  * on screen. Left alone, the credit card's cells would still be sitting under
- * the next card's bar. So every frame names every id, and the ones it does
- * not use go as tombstones -- a `display_until` already in the past, which
- * the device destroys on sight.
+ * the next card's bar. So an id a frame stops using goes out as a tombstone
+ * -- a `display_until` already in the past, which the device destroys on
+ * sight. Which ids need one is `complete()`'s business, below.
  *
  * An id must also keep its **type** across draws or the entire batch 400s,
  * which is why `reset` is always text and never a countdown.
  */
 const IDS: Array<[string, "text" | "rectangle" | "image"]> = [
-  // The mascot is named every frame like everything else -- but an image
-  // tombstone does not destroy the element the way a text or rectangle one
-  // does; the sprite stays on screen. So no screen relies on it leaving: the
-  // alert reuses this id for its icon and covers the slot with an opaque box.
+  // An image tombstone does not destroy the element the way a text or
+  // rectangle one does; the sprite stays on screen. So no screen relies on it
+  // leaving: the alert reuses this id for its icon and covers the slot with
+  // an opaque box.
   ["pet", "image"],
   ["num", "text"],
   ["label", "text"],
@@ -167,15 +167,21 @@ function tombstone(id: string, type: "text" | "rectangle" | "image"): Element {
            fill_colors: [COL_TRACK], border_width: 0 };
 }
 
-/** Fills in whatever the frame left out, so nothing lingers from the last card. */
 /**
  * TOMBSTONE ONLY WHAT IS ACTUALLY ON SCREEN.
  *
  * Every frame used to name all twenty ids, so a six-element card shipped
- * twelve tombstones with it. That is not free on this device: building an
- * eighteen-element frame costs about two seconds of JerryScript and the
- * device takes another second or so to accept it, which is most of the delay
- * between pressing a button and the pixels changing.
+ * twelve tombstones with it. On the device that count shows up in one place,
+ * the JSON: `JSON.stringify` takes 650-850ms over a sixteen-element frame and
+ * 140-230ms over a four-element one. Nothing else moves with it -- the POST
+ * takes 0.4-0.7s at either size, and this function ~0.6-0.9s whether it adds
+ * twelve tombstones or none.
+ *
+ * So half a second is what this saves, and it is not most of the delay.
+ * Building a frame costs 1-1.8s of JerryScript however few elements it has --
+ * `quota()` alone is 0.2-0.7s for four -- and a card still lands two to three
+ * seconds after its data. The heap is not why: the same frames cost the same
+ * with `heap_size_kib` at 128. Where that time does go is not yet known.
  *
  * An id only needs removing if it is displayed, and the only ids displayed
  * are the ones the last frame drew. Tracking that turns the usual case --
@@ -189,7 +195,8 @@ function tombstone(id: string, type: "text" | "rectangle" | "image"): Element {
  * about the canvas, and a belief can be wrong -- another app can draw, and a
  * previous run of this one can leave elements behind (which is why startup
  * clears the canvas outright). The sweep bounds how long anything unexpected
- * can survive, at the cost of one expensive frame in every SWEEP_EVERY.
+ * can survive, at the cost of half a second more JSON once every SWEEP_EVERY
+ * frames.
  */
 const TOMBSTONES: Record<string, Element> = {};
 for (const pair of IDS) TOMBSTONES[pair[0]] = tombstone(pair[0], pair[1]);
@@ -540,8 +547,9 @@ function message(value: string, withPet: Card | null): Element[] {
  * from "Running script" to the first line of this file. Then module init is
  * ~0.5s, the clear ~0.4s and the first POST ~0.7s, so the caption is up about
  * 1.7s after the app's first line runs -- and the first real frame follows
- * the data by ~3s, of which ~2s is JerryScript building an 18-element frame
- * and ~1.2s the device taking it.
+ * the data by ~3s: 1.2-1.7s building it, ~0.7s stringifying it (the first
+ * frame is always a sixteen-element sweep), ~0.3s waiting out the last
+ * caption tick, and ~0.4s the device taking it.
  *
  * It does not return on a reconnect. After the first frame the last good card
  * stands until the alert takes over (see FAILS_BEFORE_ALERT): a single missed
@@ -550,8 +558,10 @@ function message(value: string, withPet: Card | null): Element[] {
  * than a blank one. The alert is a real frame as well, so from alert back to
  * card there is nothing to bridge.
  *
- * The frame names only `msg`. The canvas was just cleared, and the first real
- * frame runs `complete()` over whatever is left.
+ * The frame names only `msg`, and it goes out without `complete()`, so
+ * `onScreen` never hears of it. What removes it is that the first real frame
+ * is always a full sweep -- the count starts at zero and `clearCanvas()` puts
+ * it back there -- which tombstones `msg` along with everything else.
  */
 const CONNECTING_MS = 500;
 const CONNECTING_DOTS = [".", "..", "..."];
