@@ -284,6 +284,30 @@ Everything here was found against real hardware, and none of it is in the publis
 
 **Access over Wi-Fi is off by default; over USB it is not gated.** Ask the device rather than inferring: `GET /api/access` is ungated and returns `{"mode": "disabled"|"enabled"|"key"}`. Over USB the bar is always **10.0.4.20** (printed on its back cover) and the host is **10.0.4.21**.
 
+**Wi-Fi carries the app, and nothing else.** With the bar in `key` mode the
+gated endpoints answer `403` to anything but the cable, which is most of them:
+`/api/screen`, `/api/storage/*`, `/api/display/draw`. So **screenshots,
+installing the app, and the button reader are USB-only**, and only the
+direction that matters for the display — the app pulling from the daemon —
+survives without it. Plan on docking to change anything and unplugging to run
+it. The key is a *web-UI password* and gates a browser session, so no header
+a daemon can send will satisfy it; see the `busybar_token` note below.
+
+**Unplugging USB reboots the bar, and a reboot loses the Wi-Fi network.** Both
+halves were measured: pulling the cable took the uptime back to zero with the
+battery at 100%, and after every reboot `/api/wifi/status` reads
+`disconnected` until someone joins the network by hand. `POST
+/api/wifi/connect` will not do it for you — it answers `{"error":"Key password
+is missing"}`, so it wants the credentials every time and there is no saved
+network to re-trigger. Automating it would mean keeping your Wi-Fi password in
+the daemon's config, which is a bad trade for a display.
+
+**Which makes a charger, not the Mac, the right thing to plug it into.** On
+wall power the bar keeps its network, the app falls through to the host name,
+and the machine can roam. Verified in that configuration: the bar polled the
+daemon continuously over Wi-Fi with no USB present, reaching it on the
+laptop's *wired* address through the router's name for it.
+
 **An out-of-memory abort is completely silent.** This one cost the most. The JS runtime's heap is small — 40,000 array pushes kills it — and when it dies, nothing is logged: the script's first line prints, the last never does, no error, no exit message. `@busy-app/busy-lib`'s `render()` ships font metric tables that exceed it, so the app composes its elements by hand with absolute coordinates. A 72×16 screen wants absolute positions anyway.
 
 **Image paths resolve against the app root**, not the assets folder — `appmeta/assets/clawd_16.png`, not `clawd_16.png`. And one unreadable image **rejects the entire draw** with a 400, so a wrong path means no frame at all rather than a frame with a gap in it.
