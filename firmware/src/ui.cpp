@@ -621,7 +621,10 @@ static void render_credit_card(const UsageData* data) {
     int total = held + used;
     if (total > MAX_CREDIT_CELLS) total = MAX_CREDIT_CELLS;
 
-    lv_label_set_text_fmt(lbl_weekly_pct, "%d", held + used);
+    // What you can still spend, which is what the cells beneath already say --
+    // the lit run is `held`. Printing the total here put a number above them
+    // that contradicted them: 2 credits left read as "4" over two lit cells.
+    lv_label_set_text_fmt(lbl_weekly_pct, "%d", held);
     lv_label_set_text(lbl_weekly_label, "Resets");
     if (bar_weekly) lv_obj_add_flag(bar_weekly, LV_OBJ_FLAG_HIDDEN);
 
