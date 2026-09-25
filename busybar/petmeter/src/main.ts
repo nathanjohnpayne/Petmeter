@@ -123,8 +123,6 @@ const IDS: Array<[string, "text" | "rectangle" | "image"]> = [
   ["msg", "text"],
   ["msg2", "text"],
   ["box", "rectangle"],
-  ["track", "rectangle"],
-  ["fill", "rectangle"],
   ["paused", "rectangle"],
   ["tmask", "rectangle"],
   ["ttext", "text"],
