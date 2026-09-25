@@ -89,6 +89,12 @@ token_refresh = off
 #   Push and pull cannot both run: the device refuses a second application
 #   name at equal priority, so set one or the other, never both.
 # busybar_serve = 10.0.4.21:8724
+#
+#   Binding to the USB address is deliberate: the endpoint has no
+#   authentication, and your usage is nobody else's business on a shared
+#   network. `0.0.0.0:8724` answers everywhere, which is what the on-device
+#   app needs over Wi-Fi -- the app must also be built with that address in
+#   VITE_PETMETER_HOST, since its default is the USB one.
 
 # Where to read the bar's buttons from. Only needed if the bar is not at its
 # default address.

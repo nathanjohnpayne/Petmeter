@@ -163,6 +163,30 @@ python -m daemon.sinks.busybar http://10.0.4.20
 busybar_serve = 10.0.4.21:8724      # this host, on the bar's USB network
 ```
 
+**Over Wi-Fi it needs both ends changed, and it is worth knowing why.** The
+app's default host is `10.0.4.21`, which is your machine's address *on the USB
+link* — a network that exists only while the cable does. An app holding only
+that address reports the host unreachable over Wi-Fi, correctly and forever.
+So:
+
+```ini
+busybar_serve = 0.0.0.0:8724        # answer on every interface, not just USB
+```
+
+```bash
+# a comma-separated list; the app moves down it each time one fails
+VITE_PETMETER_HOST="http://10.0.4.21:8724,http://your-mac.local:8724" pnpm build
+```
+
+Prefer the `.local` name over a LAN address: the address comes from DHCP and
+will eventually belong to something else.
+
+> **This puts your usage on your network.** The endpoint has no
+> authentication — it was bound to the USB link precisely so that it was not
+> reachable from anywhere you might sit. On a home network that is probably
+> fine; on a shared or café network, anyone can read your percentages and
+> reset times. Keep the USB-only bind if that matters to you.
+
 ```bash
 cd busybar/petmeter && pnpm install && pnpm build
 python3 ../../tools/busybar_install_app.py http://10.0.4.20

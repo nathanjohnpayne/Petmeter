@@ -21,8 +21,31 @@ const APP = manifest.id;
  * /usage.json. Over USB both addresses are fixed -- the bar is 10.0.4.20 and
  * the host 10.0.4.21 -- so there is nothing to discover and no Wi-Fi involved.
  */
-const HOST = import.meta.env.VITE_PETMETER_HOST ?? "http://10.0.4.21:8724";
-const SELF = "http://10.0.4.20";
+/**
+ * Where the daemon might be, in the order worth trying.
+ *
+ * Over USB the host is always 10.0.4.21, which is why that is the default and
+ * the only one that needs no configuring. But that address lives on the USB
+ * link and nowhere else, so an app holding only it cannot work over Wi-Fi at
+ * all -- it reports the host unreachable, correctly, forever. Pass a
+ * comma-separated list through VITE_PETMETER_HOST to add wherever else the
+ * daemon answers (`daemon/sinks/serve.py` must be bound there too), and the
+ * app moves down the list each time one fails.
+ *
+ * A name is worth more than an address here: a LAN address comes from DHCP
+ * and will eventually be someone else's.
+ */
+const HOSTS: string[] = (import.meta.env.VITE_PETMETER_HOST ??
+  "http://10.0.4.21:8724")
+  .split(",")
+  .map((h: string) => h.trim())
+  .filter((h: string) => h.length > 0);
+let hostAt = 0;
+
+// The bar's own API, over loopback rather than 10.0.4.20. That address is the
+// bar's end of the USB link, so naming it here made the app's ability to draw
+// depend on a cable it does not otherwise need.
+const SELF = "http://127.0.0.1";
 
 // The host holds the request open until something changes, so a press
 // reaches the screen in one round trip. A return with nothing changed is not
@@ -640,7 +663,7 @@ export default function run(): void {
   async function loop(): Promise<void> {
     for (;;) {
       try {
-        const url = `${HOST}/usage.json?since=${gen}&wait=${WAIT_MS}`;
+        const url = `${HOSTS[hostAt]}/usage.json?since=${gen}&wait=${WAIT_MS}`;
         const data = await fetch(url).then((r) => r.json());
         polledAt = Date.now();
         backoff = RETRY_MS;
@@ -669,6 +692,9 @@ export default function run(): void {
         // Host asleep, unplugged, or the daemon stopped. Say which rather
         // than leaving the last good frame up to go quietly stale.
         report(err);
+        // Try the next address before concluding anything. With one host this
+        // is a no-op, so the USB-only case pays nothing for it.
+        hostAt = (hostAt + 1) % HOSTS.length;
         if (++fails >= FAILS_BEFORE_ALERT) {
           await stopConnecting();   // so is the alert
           await draw(message("no host", null)).catch(report);
