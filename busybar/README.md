@@ -407,6 +407,25 @@ every 8s also restores the frame after anything else clears the canvas.
 | wheel **scroll** | steps through the cards |
 | wheel press (**OK/Skip**) | skips forward |
 
+**The buttons only work while the bar is docked**, and it is the bar's access
+mode doing it rather than anything about the buttons. They are read over the
+CLI on **port 23**, which is a separate service from the HTTP API and gated
+separately — but gated all the same: with the bar in `key` mode over Wi-Fi,
+port 23 accepts the TCP connection and then resets it before sending a byte,
+so the reader cannot log a single press. Over USB the same port serves
+`input dump` happily.
+
+So on a charger the bar rotates on its own and the controls are inert. That is
+a real cost of running it untethered, and worth weighing against the roaming
+the host name buys you.
+
+`GET /api/access` reports the mode, and the device documents `disabled`,
+`enabled` and `key`. **`enabled` looks like the lever** — it should un-gate
+Wi-Fi for HTTP, and plausibly for the CLI with it, which would bring the
+buttons back untethered. Untested here, and not free: it opens the bar to
+anyone on the network, who could then draw on it, read its screen and drive
+its CLI.
+
 **On macOS, the daemon has to be launched through `osascript`** — one command,
 but the reason is worth knowing, because the symptom lies:
 
