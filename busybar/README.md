@@ -175,11 +175,19 @@ busybar_serve = 0.0.0.0:8724        # answer on every interface, not just USB
 
 ```bash
 # a comma-separated list; the app moves down it each time one fails
-VITE_PETMETER_HOST="http://10.0.4.21:8724,http://your-mac.local:8724" pnpm build
+VITE_PETMETER_HOST="http://10.0.4.21:8724,http://192.168.1.x:8724" pnpm build
 ```
 
-Prefer the `.local` name over a LAN address: the address comes from DHCP and
-will eventually belong to something else.
+**It has to be an address, not a name.** A `.local` name is the obvious way to
+survive a DHCP change, and it does not work: pointed at one, the app reports
+the host unreachable, while the same build pointed at the same machine's IP
+draws immediately. The bar does not resolve mDNS. Give the machine a DHCP
+reservation in your router instead — that is the durable fix, and it is one
+the app cannot help with.
+
+**Expect Wi-Fi to be slower and lossier than the cable**, which is why USB
+stays first in the list. Measured while connected at −66 dBm: ping to the bar
+averaged 1.9s with half the packets dropped, against 0.4ms over USB.
 
 > **This puts your usage on your network.** The endpoint has no
 > authentication — it was bound to the USB link precisely so that it was not
