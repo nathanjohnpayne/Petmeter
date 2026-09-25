@@ -178,12 +178,27 @@ busybar_serve = 0.0.0.0:8724        # answer on every interface, not just USB
 VITE_PETMETER_HOST="http://10.0.4.21:8724,http://192.168.1.x:8724" pnpm build
 ```
 
-**It has to be an address, not a name.** A `.local` name is the obvious way to
-survive a DHCP change, and it does not work: pointed at one, the app reports
-the host unreachable, while the same build pointed at the same machine's IP
-draws immediately. The bar does not resolve mDNS. Give the machine a DHCP
-reservation in your router instead — that is the durable fix, and it is one
-the app cannot help with.
+**Use the name your router gives the machine, not a `.local` name and not an
+address.** Three builds, one after the other, nothing else changed:
+
+| host the app was built with | result |
+|---|---|
+| `nathans-macbook.local` (mDNS) | host unreachable |
+| `192.168.1.x` (the address) | draws |
+| `nathans.macbook.pro.16.lan` (router DNS) | draws |
+
+The bar does not resolve mDNS, so the obvious way to survive a DHCP change is
+the one that does not work. But the bar does use the router for DNS, and most
+routers publish a name for every device they hand an address to — Firewalla
+uses `.lan`. That name is the durable answer, and better than a reservation:
+it resolves to **every** address the machine currently holds, so a laptop that
+moves between Wi-Fi and a dock, or between adapters in different rooms, keeps
+working without the app being rebuilt. Find yours with `dig +short -x <your-ip>
+@<your-router>`.
+
+An address still works and is the fallback when a router publishes no names —
+pair it with a DHCP reservation, or it will eventually belong to something
+else.
 
 **Expect Wi-Fi to be slower and lossier than the cable**, which is why USB
 stays first in the list. Measured while connected at −66 dBm: ping to the bar
