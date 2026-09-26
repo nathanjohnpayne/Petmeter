@@ -12,6 +12,25 @@ import manifest from "./appmeta/manifest.json";
  * was not there. Positions here are absolute, which a 72x16 screen wants
  * anyway.
  */
+
+/**
+ * WHAT THIS RUNTIME CHARGES FOR, MEASURED ON THE BAR.
+ *
+ * Everything is slow -- a loop iteration touching only locals is ~0.1ms --
+ * and anything that allocates is slower again: an array or a small object
+ * ~10ms, an element-sized object literal or a spread ~40ms. `for...of`
+ * allocates on every step, which makes it the most expensive loop there is
+ * here: 340ms to walk the eighteen ids against 11ms indexed, 150ms to walk a
+ * seven-letter string against 7ms. `for...in` is no better, ~37ms over four
+ * keys. So loops in this file are indexed, and any loop that runs per frame
+ * should stay that way.
+ *
+ * Neither the heap size nor the live set moves any of this: the same code
+ * costs the same with `heap_size_kib` at 128 and with 150 extra objects
+ * alive. The cost belongs to the runtime, and all this file can do is ask
+ * for less of it. Measure before believing otherwise: `Date.now()` spans
+ * flushed in one `console.error` a cycle, since that call alone is 0.1-0.4s.
+ */
 type Element = Record<string, unknown>;
 
 const APP = manifest.id;
@@ -174,14 +193,14 @@ function tombstone(id: string, type: "text" | "rectangle" | "image"): Element {
  * twelve tombstones with it. On the device that count shows up in one place,
  * the JSON: `JSON.stringify` takes 650-850ms over a sixteen-element frame and
  * 140-230ms over a four-element one. Nothing else moves with it -- the POST
- * takes 0.4-0.7s at either size, and this function ~0.6-0.9s whether it adds
- * twelve tombstones or none.
+ * takes 0.4-0.7s at either size.
  *
- * So half a second is what this saves, and it is not most of the delay.
- * Building a frame costs 1-1.8s of JerryScript however few elements it has --
- * `quota()` alone is 0.2-0.7s for four -- and a card still lands two to three
- * seconds after its data. The heap is not why: the same frames cost the same
- * with `heap_size_kib` at 128. Where that time does go is not yet known.
+ * That half second was not most of the delay. This function was: it walked
+ * the ids with `for...of` and rebuilt `onScreen` with `for...in`, which cost
+ * 0.6-0.9s a frame whether it added twelve tombstones or none. Indexed, it
+ * is ~0.1s. With the width helpers below fixed the same way, a four-element
+ * frame builds in 0.3-0.6s instead of 1-1.3s, and the time from a parsed
+ * reply to the draw returning fell from 1.7-2.2s to 1.1-1.4s.
  *
  * An id only needs removing if it is displayed, and the only ids displayed
  * are the ones the last frame drew. Tracking that turns the usual case --
@@ -199,7 +218,10 @@ function tombstone(id: string, type: "text" | "rectangle" | "image"): Element {
  * frames.
  */
 const TOMBSTONES: Record<string, Element> = {};
-for (const pair of IDS) TOMBSTONES[pair[0]] = tombstone(pair[0], pair[1]);
+for (let i = 0; i < IDS.length; i++) {
+  const pair = IDS[i];
+  TOMBSTONES[pair[0]] = tombstone(pair[0], pair[1]);
+}
 
 const SWEEP_EVERY = 20;
 let sweepIn = 0;
@@ -209,27 +231,26 @@ const SELF_CLEARING: Record<string, boolean> = { tmask: true, ttext: true };
 let onScreen: Record<string, boolean> = {};
 
 function complete(used: Element[]): Element[] {
-  const seen: Record<string, boolean> = {};
-  for (const el of used) seen[el.id as string] = true;
+  // What this frame draws, less the self-clearing ids: both what the loop
+  // below must leave alone and what `onScreen` becomes. A fresh object every
+  // frame, never edited in place.
+  const drawn: Record<string, boolean> = {};
+  for (let i = 0; i < used.length; i++) {
+    const id = used[i].id as string;
+    if (!SELF_CLEARING[id]) drawn[id] = true;
+  }
 
   const out = used.slice();
   const sweep = sweepIn <= 0;
   sweepIn = sweep ? SWEEP_EVERY : sweepIn - 1;
 
-  for (const pair of IDS) {
-    const id = pair[0];
-    if (SELF_CLEARING[id] || seen[id]) continue;
+  for (let i = 0; i < IDS.length; i++) {
+    const id = IDS[i][0];
+    if (SELF_CLEARING[id] || drawn[id]) continue;
     if (sweep || onScreen[id]) out.push(TOMBSTONES[id]);
   }
 
-  // Rebuilt rather than edited in place: what is on screen after this frame
-  // is exactly what this frame drew, and mutating the object being iterated
-  // is a way to be clever and wrong.
-  const next: Record<string, boolean> = {};
-  for (const id in seen) {
-    if (!SELF_CLEARING[id]) next[id] = true;
-  }
-  onScreen = next;
+  onScreen = drawn;
   return out;
 }
 
@@ -241,7 +262,9 @@ function forgetCanvas(): void {
 
 function largeWidth(text: string): number {
   let w = 0;
-  for (const ch of text) w += ch === "%" ? LARGE_PCT : LARGE_DIGIT;
+  for (let i = 0; i < text.length; i++) {
+    w += text[i] === "%" ? LARGE_PCT : LARGE_DIGIT;
+  }
   return w;
 }
 
@@ -249,7 +272,10 @@ function largeWidth(text: string): number {
 // pushed the right-aligned reset past the screen edge -- "4h5m" lost its m.
 function smallWidth(text: string): number {
   let w = 0;
-  for (const ch of text) w += ch === "m" || ch === "w" ? SMALL_WIDE : SMALL_ADV;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    w += ch === "m" || ch === "w" ? SMALL_WIDE : SMALL_ADV;
+  }
   return w;
 }
 
@@ -547,9 +573,9 @@ function message(value: string, withPet: Card | null): Element[] {
  * from "Running script" to the first line of this file. Then module init is
  * ~0.5s, the clear ~0.4s and the first POST ~0.7s, so the caption is up about
  * 1.7s after the app's first line runs -- and the first real frame follows
- * the data by ~3s: 1.2-1.7s building it, ~0.7s stringifying it (the first
+ * the data by ~1.8s: ~0.5s building it, ~0.6s stringifying it (the first
  * frame is always a sixteen-element sweep), ~0.3s waiting out the last
- * caption tick, and ~0.4s the device taking it.
+ * caption tick, and ~0.3s the device taking it.
  *
  * It does not return on a reconnect. After the first frame the last good card
  * stands until the alert takes over (see FAILS_BEFORE_ALERT): a single missed
