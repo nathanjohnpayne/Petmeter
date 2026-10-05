@@ -19,6 +19,7 @@ binding narrow is cheaper than explaining to a firewall later. Override with
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import time
 
@@ -29,6 +30,11 @@ CONTROL_PATH = "/control"
 
 _latest: dict = {"ok": False}
 _server: asyncio.AbstractServer | None = None
+_retry: asyncio.Task | None = None
+
+# Seconds between attempts to take a port someone else is holding, then the
+# last value forever. See `start()` for who that someone usually is.
+BIND_RETRY_S = (0.5, 1.0, 2.0, 5.0)
 
 # How long a card holds the screen when nothing is pressed, and how often the
 # rotation clock is checked.
@@ -270,28 +276,71 @@ async def _rotate() -> None:
         control.tick()
 
 
+async def _bind(bind: str, port: int) -> None:
+    global _server
+    _server = await asyncio.start_server(_handle, bind, port)
+    asyncio.get_running_loop().create_task(_rotate())
+
+
+async def _bind_when_free(bind: str, port: int, log) -> None:
+    """Keep trying a port that is in use until it is not."""
+    global _retry
+    attempt = 0
+    while True:
+        await asyncio.sleep(BIND_RETRY_S[min(attempt, len(BIND_RETRY_S) - 1)])
+        attempt += 1
+        try:
+            await _bind(bind, port)
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                continue
+            log(f"busybar serve: gave up on {bind}:{port} ({exc.strerror})")
+            break
+        log(f"busybar serve: {bind}:{port}{PATH}")
+        break
+    _retry = None
+
+
 async def start(bind: str = DEFAULT_BIND, port: int = DEFAULT_PORT,
                 log=print) -> bool:
-    """Start serving. False (never an exception) if the address is unusable."""
-    global _server
-    if _server is not None:
+    """Start serving. False (never an exception) if the address is unusable.
+
+    True also covers a port that is only *in use*, which then binds in the
+    background as soon as it frees up.
+    """
+    global _server, _retry
+    if _server is not None or _retry is not None:
         return True
     try:
-        _server = await asyncio.start_server(_handle, bind, port)
+        await _bind(bind, port)
     except OSError as exc:
-        # Almost always "Can't assign requested address" because the bar is
-        # not plugged in, so the USB interface does not exist. Not fatal, and
-        # not worth retrying on a timer -- plug it in and restart.
+        if exc.errno == errno.EADDRINUSE:
+            # Almost always the previous daemon, still exiting. `launchctl
+            # kickstart -k` starts the new one before the old one's child has
+            # let go of the socket, and binding once used to leave the new
+            # daemon running for good with no server -- the bar reading "The
+            # host is unreachable" until a second restart. The holder is gone
+            # within seconds, so wait for it rather than give up.
+            log(f"busybar serve: {bind}:{port} is in use; "
+                "will bind as soon as it is free")
+            _retry = asyncio.get_running_loop().create_task(
+                _bind_when_free(bind, port, log))
+            return True
+        # Otherwise almost always "Can't assign requested address" because the
+        # bar is not plugged in, so the USB interface does not exist. Not
+        # fatal, and not worth retrying on a timer -- plug it in and restart.
         log(f"busybar serve: not listening on {bind}:{port} ({exc.strerror})")
         _server = None
         return False
-    asyncio.get_running_loop().create_task(_rotate())
     log(f"busybar serve: {bind}:{port}{PATH}")
     return True
 
 
 async def stop() -> None:
-    global _server
+    global _server, _retry
+    if _retry is not None:
+        _retry.cancel()
+        _retry = None
     if _server is not None:
         _server.close()
         await _server.wait_closed()
