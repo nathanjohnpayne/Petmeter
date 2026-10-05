@@ -616,13 +616,39 @@ async function clearCanvas(): Promise<void> {
 
 let lastError = "";
 
+/**
+ * A FRAME THAT DID NOT LAND FORCES A SWEEP.
+ *
+ * `complete()` updates `onScreen` while it builds the frame, before the device
+ * has said yes. When the device then says no -- a 409 from a focus session, a
+ * 400, a POST that never came back -- the belief is wrong in the one way that
+ * matters: ids the failed frame was going to remove are still lit, and the app
+ * has stopped tracking them, so no later frame tombstones them either.
+ *
+ * The likely story behind a fifth credit cell reported under "1/4": the
+ * window had held five credits days earlier ("2/5"), and if the frame that
+ * should have dropped `cell4` did not land, the cell stayed lit over a card
+ * whose number said four. Not caught in the act -- the screen cannot be read
+ * over Wi-Fi -- but nothing else in the app draws a fifth cell for a four.
+ *
+ * The cheapest correct answer is to stop believing anything: the next frame
+ * sweeps every id it does not draw. One extra half second of JSON, only after
+ * a failure.
+ */
 async function draw(elements: Element[]): Promise<void> {
-  const resp = await fetch(
-    new Request(`${SELF}/api/display/draw`, {
-      method: "POST",
-      body: JSON.stringify({ application_name: APP, priority: 50, elements }),
-    }),
-  );
+  let resp: Response;
+  try {
+    resp = await fetch(
+      new Request(`${SELF}/api/display/draw`, {
+        method: "POST",
+        body: JSON.stringify({ application_name: APP, priority: 50, elements }),
+      }),
+    );
+  } catch (err) {
+    sweepIn = 0;
+    throw err;
+  }
+  if (resp.status !== 200) sweepIn = 0;
   // A rejected draw used to be silent, which is what made a bad frame look
   // like a dead app. 409 is a focus session owning the screen, not a fault.
   if (resp.status !== 200 && resp.status !== 409) {
