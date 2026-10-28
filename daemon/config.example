@@ -96,10 +96,6 @@ token_refresh = off
 #   app needs over Wi-Fi -- the app must also be built with that address in
 #   VITE_PETMETER_HOST, since its default is the USB one.
 
-# Where to read the bar's buttons from. Only needed if the bar is not at its
-# default address.
-# busybar_cli = 10.0.4.20
-
 # Bluetooth, for the ESP32 desk meter. Turn it OFF if you have a BUSY Bar and
 # no meter: the poll loop lives inside a BLE connection, so without this the
 # daemon searches for a device that is not there, never polls, and every

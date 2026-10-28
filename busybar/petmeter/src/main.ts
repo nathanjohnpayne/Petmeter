@@ -708,18 +708,41 @@ export default function run(): void {
     return Math.max(0, card.in_s - Math.round((Date.now() - polledAt) / 1000));
   }
 
-  // The controls the case is engraved with are read on the HOST, off the
-  // device's CLI: this firmware gives a JS app no input API at all. If a
-  // future one does, `listen` appears and the app can forward events rather
-  // than growing a second state machine.
-  if (typeof listen === "function") {
-    try {
-      listen("input", () => {
-        /* reserved: forward to the host once the firmware exposes this */
-      });
-    } catch (err) {
-      report(err);
+  /**
+   * THE BUTTONS ARE FORWARDED, NOT HANDLED.
+   *
+   * The rotation clock and the pause live on the host (sinks/serve.py's
+   * Control), so a press goes there and comes back as a new `gen` on the poll
+   * already waiting. One state machine on one side; the app stays a renderer.
+   * Short rather than press for the buttons, so a long press stays free for
+   * something else; the wheel only ever reports a turn. A long Back is the
+   * firmware's force-quit and never reaches this handler.
+   *
+   * `listen` sits on the GUI's system layer, above the canvas, so presses
+   * arrive while our elements are on screen -- the canvas swallowing them is
+   * why they used to be read off the CLI's `input dump` instead. That reader
+   * is gone: it reads the pubsub, below this layer, so running both would
+   * apply every press twice.
+   */
+  function forward(event: InputEvent): void {
+    let action = "";
+    if (event.key === "encoder") {
+      action = event.action === "clockwise" ? "next" : "prev";
+    } else if (event.action === "short") {
+      if (event.key === "start") action = "pause";
+      else if (event.key === "ok") action = "next";
     }
+    if (action === "") return;
+    // Read the body so the response is finished with, not left for the GC.
+    fetch(`${HOSTS[hostAt]}/control?do=${action}`)
+      .then((r) => r.text())
+      .catch(report);
+  }
+
+  try {
+    listen("input", forward);
+  } catch (err) {
+    report(err);
   }
 
   async function loop(): Promise<void> {
@@ -771,9 +794,10 @@ export default function run(): void {
 }
 
 /**
- * The runtime's input global, installed by js_input.c -- which postdates the
- * firmware this device runs, so it is absent here. Declared for the day a
- * newer one has it; the buttons are read host-side in the meantime.
+ * The runtime's input global, installed by js_input.c from firmware 1.3.1 --
+ * the first release that also requires the manifest's `api_version`, so any
+ * firmware that loads this app has it. One handler per app: a second `listen`
+ * throws. The return value unbinds it.
  */
 declare function listen(
   type: "input",
@@ -782,6 +806,10 @@ declare function listen(
 
 type InputEvent = {
   key: "encoder" | "start" | "ok" | "back";
-  action: "press" | "release" | "clockwise" | "counterclockwise";
+  /** The wheel reports a turn; the buttons report the press's phase. */
+  action:
+    | "clockwise" | "counterclockwise"
+    | "press" | "release" | "short" | "long" | "repeat";
+  /** The wheel only: +1 clockwise, -1 counterclockwise. */
   delta?: number;
 };

@@ -19,7 +19,7 @@ spawned through it. Measured A/B on the same machine, same probe:
     launchd -> python             [Errno 65] No route to host
     launchd -> osascript -> python   connected
 
-Bluetooth still works through this path, which matters more than the buttons:
+Bluetooth still works through this path, which matters more than the bar does:
 the daemon needs launchd for CoreBluetooth (it SIGABRTs from a plain shell),
 so any fix that cost BLE would be a bad trade. Verified -- the desk meter kept
 receiving data across the change.
@@ -102,7 +102,8 @@ def main() -> int:
           "I/O error 5):\n"
           f"  launchctl bootout gui/{uid}/{label}\n"
           f"  launchctl bootstrap gui/{uid} {path}\n\n"
-          "Then look for 'busybar buttons: reading' in the daemon log.")
+          "Then look for 'busybar serve:' in the daemon log, and check the bar shows\n"
+          "usage rather than 'The host is unreachable'.")
     return 0
 
 

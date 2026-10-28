@@ -63,7 +63,7 @@ busybar_url = http://10.0.4.20   # push. USB; or http://busybar.local over Wi-Fi
 
 Over USB the bar is always `10.0.4.20` and your machine is `10.0.4.21`, both
 printed on the case. That is enough for the push path. For the on-device app
-and the physical buttons, add `busybar_serve` as under [Pull](#pull) and then
+(and its buttons), add `busybar_serve` as under [Pull](#pull) and then
 grant the daemon LAN access — **this step is not optional on Sequoia or
 later**, and [the buttons](#the-buttons) explains the fairly hostile way it
 fails if you skip it:
@@ -221,7 +221,7 @@ Then launch it over the bar's CLI (`telnet 10.0.4.20`, port 23):
 js -i app.petmeter /ext/user_assets/app.petmeter/scripts/main.js
 ```
 
-**The controls work, but not from inside the app.** They follow what the case is engraved with — the red **Start/Pause** bar holds and releases the rotation, the wheel **scrolls** by hand, and its press, labelled **OK/Skip**, skips forward. This firmware gives a JS app no input API at all, so the presses are read on the **host** off the bar's CLI and the app renders what it is told. [The buttons](#the-buttons) has the detail, including the macOS permission it needs.
+**The controls follow what the case is engraved with** — the red **Start/Pause** bar holds and releases the rotation, the wheel **scrolls** by hand, and its press, labelled **OK/Skip**, skips forward. The app hears them through firmware 1.3.1's `listen` and forwards each one to the daemon, which owns the rotation; the app renders what it is told. [The buttons](#the-buttons) has the detail.
 
 ## Nothing here is hosted
 
@@ -247,8 +247,7 @@ separate differently:
   its own release workflow that turns a version tag into a `.tgz` device
   package. It could move tomorrow.
 - **The daemon halves** ([`sinks/busybar.py`](../daemon/sinks/busybar.py),
-  [`sinks/serve.py`](../daemon/sinks/serve.py),
-  [`sinks/busybar_buttons.py`](../daemon/sinks/busybar_buttons.py)) are
+  [`sinks/serve.py`](../daemon/sinks/serve.py)) are
   Petmeter. They import the collectors, share the poll loop and the free-ride
   token rule, and exist to turn *Petmeter's* snapshot into cards. Moving them
   means duplicating the collector stack or making Petmeter a package it is
@@ -287,7 +286,7 @@ Everything here was found against real hardware, and none of it is in the publis
 **Wi-Fi carries the app, and nothing else.** With the bar in `key` mode the
 gated endpoints answer `403` to anything but the cable, which is most of them:
 `/api/screen`, `/api/storage/*`, `/api/display/draw`. So **screenshots,
-installing the app, and the button reader are USB-only**, and only the
+and installing the app are USB-only**, and only the
 direction that matters for the display — the app pulling from the daemon —
 survives without it. Plan on docking to change anything and unplugging to run
 it. The key is a *web-UI password* and gates a browser session, so no header
@@ -379,26 +378,13 @@ are what the menu shows.
 
 ## The buttons
 
-The bar's own buttons work, but not from inside the app. `js_input.c` — the
-file that installs the `listen` global — was committed on **2026-09-16**, five
-days *after* release **1.2.4** (2026-09-11), which is what the device runs;
-that path 404s at the tag. Its `js_runner.c` sets up exactly `console`, the
-interval functions, `fetch` and `localStorage`, which is precisely what a
-`for…in` probe enumerates on the hardware.
-
-So the **host** reads them instead. The device's CLI (TCP 23) has an `input
-dump` command that prints one line per physical event, and because it
-subscribes to the same pubsub the GUI does, **it sees presses the canvas has
-already swallowed** — which is every press while our elements are on screen.
-
-That puts the control state on the host ([`serve.Control`](../daemon/sinks/serve.py)),
-including the rotation clock, and makes the app a renderer:
+**The app reads the buttons itself, from firmware 1.3.1.** That release added `listen("input", fn)` (`js_input.c`, committed 2026-09-16, five days after 1.2.4 shipped without it). The app forwards each press to the daemon's `/control` endpoint and leaves the state where it already was, on the host ([`serve.Control`](../daemon/sinks/serve.py)), rotation clock included. The app stays a renderer:
 
 ```
-button → input dump → daemon control state → gen++ → long poll returns → app draws
+button → listen() → GET /control?do=… → gen++ → long poll returns → app draws
 ```
 
-`GET /usage.json?since=<gen>&wait=3000` holds open until something changes, so a press reaches the screen in one round trip rather than waiting out a polling interval — and a return with nothing changed is not wasted, because redrawing every 3s also restores the frame after anything else clears the canvas.
+`GET /usage.json?since=<gen>&wait=3000` holds open until something changes, so a press reaches the screen in one round trip rather than waiting out a polling interval — and a return with nothing changed is not wasted, because redrawing every 3s also restores the frame after anything else clears the canvas. A forwarded press reached the daemon ~55 ms after the bar saw it, with that long poll in flight.
 
 | | |
 |---|---|
@@ -406,24 +392,11 @@ button → input dump → daemon control state → gen++ → long poll returns �
 | wheel **scroll** | steps through the cards |
 | wheel press (**OK/Skip**) | skips forward |
 
-**The buttons only work while the bar is docked**, and it is the bar's access
-mode doing it rather than anything about the buttons. They are read over the
-CLI on **port 23**, which is a separate service from the HTTP API and gated
-separately — but gated all the same: with the bar in `key` mode over Wi-Fi,
-port 23 accepts the TCP connection and then resets it before sending a byte,
-so the reader cannot log a single press. Over USB the same port serves
-`input dump` happily.
+The buttons act on the short press, so a long press stays free for something else later. A long **Back** belongs to the firmware, which force-quits the app with it, and never reaches the handler.
 
-So on a charger the bar rotates on its own and the controls are inert. That is
-a real cost of running it untethered, and worth weighing against the roaming
-the host name buys you.
+**`listen` sits above the canvas.** It installs its callback on the GUI's *system* layer, so presses arrive while our elements are on screen. Before 1.3.1 there was no input API at all, and the canvas swallowed every press anyway, so the daemon read them off the bar's telnet CLI (`input dump` on port 23, which subscribes to the input pubsub below the GUI). That reader is gone, for two reasons. It would now double every press, since `input dump` still sees them and both paths bump `gen`, and a pause toggled twice does nothing. And port 23 is gated in `key` mode over Wi-Fi, so the controls only ever worked while the bar was on the cable. The app's forward is plain HTTP to the same daemon it pulls from, so the buttons should now work over Wi-Fi with the bar on a charger. That follows from the path, but it has not been tested untethered here.
 
-`GET /api/access` reports the mode, and the device documents `disabled`,
-`enabled` and `key`. **`enabled` looks like the lever** — it should un-gate
-Wi-Fi for HTTP, and plausibly for the CLI with it, which would bring the
-buttons back untethered. Untested here, and not free: it opens the bar to
-anyone on the network, who could then draw on it, read its screen and drive
-its CLI.
+**Testing without touching the bar:** `input send InputKeyOk InputTypeShort` over the CLI goes through the same input pubsub as a physical press, and `listen` receives it. Pause the rotation first (`curl "http://127.0.0.1:8724/control?do=pause"`) so `gen` only moves for the press, then compare `GET /control` before and after.
 
 **On macOS, the daemon has to be launched through `osascript`** — one command,
 but the reason is worth knowing, because the symptom lies:
@@ -436,7 +409,7 @@ Since Sequoia, LAN traffic is gated by Local Network privacy, and macOS
 attributes the socket to *the executable launchd spawned*. A venv `python3`
 has no application identity to attribute, so it is denied — and a background
 job cannot raise the prompt, so it is denied **silently**, surfacing as
-`no CLI (OSError: [Errno 65] No route to host)`. That reads as "the bar is
+`OSError: [Errno 65] No route to host`. That reads as "the bar is
 unplugged" and is really "the OS blocked you", which is how it survives
 every obvious fix: granting "Python" in System Settings does nothing (that
 entry is not the identity being consulted) and neither does rebooting. Both
@@ -450,19 +423,14 @@ same probe, only the spawn path differing:
 |---|---|
 | launchd → osascript → python | connected |
 
-Bluetooth still works through that path, which matters more than the buttons
-do: the daemon needs launchd for CoreBluetooth at all (it `SIGABRT`s from a
+Bluetooth still works through that path, which matters more than the bar
+does: the daemon needs launchd for CoreBluetooth at all (it `SIGABRT`s from a
 plain shell), so a fix that bought the LAN and cost BLE would be a bad trade.
 The desk meter kept receiving data across the change.
 
 The script patches the *installed* LaunchAgent rather than the template in
 `daemon/`, which is upstream's file — editing that would cost a merge conflict
 on every sync for a fix only this fork needs. `--revert` puts it back.
-
-If you would rather not have the daemon reach the network at all, skip this
-and run [`tools/busybar_buttons.py`](../tools/busybar_buttons.py) in a
-terminal instead: it reads the same CLI and POSTs to `/control`, and a
-terminal *can* raise the permission prompt.
 
 **Push and pull cannot both run.** `canvas_draw_rejected` refuses a *different*
 `application_name` at *equal* priority, so the sink (`petmeter`) and the app

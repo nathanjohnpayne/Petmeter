@@ -64,10 +64,12 @@ MAX_WAIT_MS = 3_500
 class Control:
     """What the device should be showing, and who says so.
 
-    The rotation clock lives HERE rather than in the app, because the buttons
-    do too: the firmware on this device has no input API for JS (js_input.c
-    postdates its release), so physical presses can only be read host-side off
-    the CLI. One state machine on one side beats two that have to agree.
+    The rotation clock lives HERE rather than in the app, and so do the
+    buttons. Firmware before 1.3.1 gave JS no input API, so presses were read
+    host-side off the bar's CLI; the app now gets them from `listen` and
+    forwards each one to /control. One state machine on one side beats two
+    that have to agree, and JerryScript is slow enough that the host is the
+    cheaper side to keep it on.
 
     `gen` increments on every change and is what the long poll waits for.
     """
@@ -212,13 +214,10 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
         path = target.split("?")[0]
         ok = len(parts) >= 2 and parts[0] == "GET" and path == PATH
 
-        # A button, from whoever can see one. The in-process reader uses the
-        # Control object directly; this is for a reader running outside the
-        # daemon, which on macOS is the fallback when the daemon cannot reach
-        # the bar's LAN address -- a launchd job cannot raise the Local
-        # Network prompt, so it is denied silently. See
-        # tools/busybar_lan_access.py for the fix, and this for when you would
-        # rather not apply it.
+        # A button, forwarded by the app on the bar: its `listen` handler
+        # turns each press into one of these. The reply is the new state, but
+        # the app ignores it -- the screen changes when the long poll below
+        # sees `gen` move, which is the same path every other change takes.
         if len(parts) >= 2 and path == CONTROL_PATH:
             action = _query(target).get("do", "")
             if action == "pause":
