@@ -375,6 +375,8 @@ with one message. Removing that key is the whole fix. Icons
 (`appmeta/icon_front_8x8.png`, `icon_back_11x11.png`) are optional to load but
 are what the menu shows.
 
+**Firmware 1.3.1 drops an app whose manifest has no `api_version`.** The auto-update to 1.3.1 (2026-10-28) left every file in place, but `GET /api/apps/list` and the apps menu stopped listing Petmeter, so the app looked deleted. The manifest now declares `"api_version": "27.14.0"`, which is the `api_semver` that `GET /api/version` reports on 1.3.1. Firmware refuses to install or launch an app that declares a newer API than it has, so don't raise the number past the bar's version. 1.3.1 can also launch the app without the Start/Setup menu: `curl -X POST "http://10.0.4.20/api/apps/launch?app_id=app.petmeter"`.
+
 ## The buttons
 
 The bar's own buttons work, but not from inside the app. `js_input.c` — the
