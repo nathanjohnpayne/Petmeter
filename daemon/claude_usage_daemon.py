@@ -27,12 +27,12 @@ try:
     import sinks
     from collectors import WINDOW_5H, WINDOW_7D
     from collectors.codex import CodexCollector
-    from collectors.claude import payload_from_headers
+    from collectors.claude import payload_from_headers, promote_weekly_only
 except ImportError:  # pragma: no cover - depends on invocation, both are exercised
     from daemon import sinks
     from daemon.collectors import WINDOW_5H, WINDOW_7D
     from daemon.collectors.codex import CodexCollector
-    from daemon.collectors.claude import payload_from_headers
+    from daemon.collectors.claude import payload_from_headers, promote_weekly_only
 
 import httpx
 from bleak import BleakClient
@@ -665,6 +665,7 @@ async def poll_api(token: str) -> dict | None:
     # plans; Enterprise meters a spending limit with no per-model breakdown.
     if payload.get("acct") == "pro":
         await apply_weekly_limits(payload, token)   # adds "ws" iff any exist
+        promote_weekly_only(payload)   # no 5h window: week moves up top
     add_chime_field(payload)   # adds "c":1 iff the config opts in
     add_clock_fields(payload)   # adds "t" + "tf" iff the config opts in
     return payload

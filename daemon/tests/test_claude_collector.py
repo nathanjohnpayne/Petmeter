@@ -15,6 +15,7 @@ from daemon.collectors import WINDOW_5H, WINDOW_7D
 from daemon.collectors.claude import (
     _billing_period_info,
     payload_from_headers,
+    promote_weekly_only,
     snapshot_from_headers,
 )
 
@@ -68,6 +69,35 @@ def test_weekly_only_pro_account_is_not_mistaken_for_enterprise():
 
 def test_full_pro_account_leaves_has_s_implicit():
     assert "has_s" not in payload_from_headers(PRO_HEADERS, NOW)
+
+
+WEEKLY_ONLY = {"s": 0, "sr": 0, "w": 65, "wr": 5000, "st": "allowed",
+               "acct": "pro", "ok": True, "has_s": False}
+
+
+def test_weekly_only_moves_the_week_into_the_top_card_and_fable_below():
+    p = promote_weekly_only({**WEEKLY_ONLY, "ws": [{"n": "Fable", "p": 42}]})
+    assert (p["s"], p["sr"], p["sm"], p["sk"]) == (65, 5000, "Weekly", "weekly")
+    assert (p["w"], p["wr"], p["wm"]) == (42, 5000, "Fable")
+    assert "ws" not in p and "has_s" not in p and "has_w" not in p
+
+
+def test_weekly_only_keeps_extra_scoped_models_rotating():
+    p = promote_weekly_only({**WEEKLY_ONLY, "ws": [{"n": "Fable", "p": 42},
+                                                   {"n": "Sonnet", "p": 7}]})
+    assert p["wm"] == "Fable" and p["ws"] == [{"n": "Sonnet", "p": 7}]
+
+
+def test_weekly_only_without_scoped_models_drops_the_bottom_card():
+    p = promote_weekly_only(dict(WEEKLY_ONLY))
+    assert (p["s"], p["has_w"]) == (65, False)
+
+
+def test_promote_leaves_two_window_and_enterprise_payloads_alone():
+    pro = payload_from_headers(PRO_HEADERS, NOW)
+    ent = payload_from_headers(ENT_HEADERS, NOW)
+    assert promote_weekly_only(dict(pro)) == pro
+    assert promote_weekly_only(dict(ent)) == ent
 
 
 def test_garbage_utilization_reads_as_zero():

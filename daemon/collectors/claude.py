@@ -159,6 +159,31 @@ def payload_from_headers(headers: Mapping[str, str], now: float | None = None) -
     }
 
 
+def promote_weekly_only(payload: dict) -> dict:
+    """Lay out a weekly-only Pro/Max payload so neither card is left empty.
+
+    With no 5h window the top card would be a permanent "-". Use the layout
+    Codex already drives (two weekly windows, told apart by the pill labels):
+    the all-models week moves into the top card ("sm"), the first scoped
+    model (e.g. Fable) takes the bottom card ("wm"), and any further scoped
+    models stay in "ws" to rotate behind it. With no scoped model the bottom
+    card is dropped ("has_w": false). Run after the scoped limits are merged
+    in, so "w" is the endpoint's all-models number. A no-op otherwise.
+    """
+    if payload.get("acct") != "pro" or payload.get("has_s", True):
+        return payload
+    payload.update(s=payload["w"], sr=payload["wr"], sm="Weekly", sk="weekly")
+    payload.pop("has_s")
+    scoped = payload.pop("ws", None) or []
+    if scoped:
+        payload.update(w=scoped[0]["p"], wm=scoped[0]["n"])
+        if scoped[1:]:
+            payload["ws"] = scoped[1:]
+    else:
+        payload.update(w=0, wr=0, has_w=False)
+    return payload
+
+
 def snapshot_from_headers(headers: Mapping[str, str],
                           now: float | None = None) -> UsageSnapshot:
     """The provider-agnostic view of the same headers.

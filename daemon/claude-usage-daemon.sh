@@ -540,6 +540,14 @@ build_payload_for_token() {
                 wr = (r7 - now) / 60; wr = wr > 0 ? sprintf("%.0f", wr) : 0;
                 printf "{\"s\":%s,\"sr\":%s,\"w\":%s,\"wr\":%s,\"st\":\"%s\",\"acct\":\"pro\"%s%s%s%s,\"ok\":true}", sp, sr, wp, wr, st, hs, fbl, clk, chm;
             }')
+        # Weekly-only plan: lay it out with the same shared helper the Python
+        # daemons use, so the top card shows the week instead of a dash.
+        if [ -n "$has_s_fragment" ]; then
+            payload=$(printf '%s' "$payload" | PYTHONPATH="$(dirname "${BASH_SOURCE[0]}")" python3 -c '
+import json, sys
+from collectors.claude import promote_weekly_only
+print(json.dumps(promote_weekly_only(json.load(sys.stdin)), separators=(",", ":")))' 2>/dev/null) || return 1
+        fi
     else
         # Enterprise account — spending-limit model
         overage_util=${overage_util:-0}; overage_reset=${overage_reset:-0}
