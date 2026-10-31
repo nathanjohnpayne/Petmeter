@@ -26,9 +26,9 @@ from pathlib import Path
 # `python /path/to/claude_usage_daemon.py`, putting daemon/ on sys.path) and as
 # `daemon.claude_usage_daemon` from the tests.
 try:
-    from collectors.claude import payload_from_headers
+    from collectors.claude import payload_from_headers, promote_weekly_only
 except ImportError:  # pragma: no cover - depends on invocation, both are exercised
-    from daemon.collectors.claude import payload_from_headers
+    from daemon.collectors.claude import payload_from_headers, promote_weekly_only
 
 import httpx
 from bleak import BleakClient
@@ -445,6 +445,7 @@ async def poll_api(token: str) -> dict | None:
     # plans; Enterprise meters a spending limit with no per-model breakdown.
     if payload.get("acct") == "pro":
         await apply_weekly_limits(payload, token)   # adds "ws" iff any exist
+        promote_weekly_only(payload)   # no 5h window: week moves up top
     add_chime_field(payload)   # adds "c":1 iff the config opts in
     add_clock_fields(payload)   # adds "t" + "tf" iff the config opts in
     return payload
