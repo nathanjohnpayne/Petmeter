@@ -92,6 +92,13 @@ def elements_for(payload: dict, now: float | None = None) -> dict:
     pct = float(payload.get("s") or 0.0)
     resets_in = payload.get("sr")
     has_data = bool(payload.get("ok")) and payload.get("has_s", True)
+    # A plan with no session window (Claude Ultra dropped its 5h limit) still
+    # has a weekly one; show that rather than "no data".
+    if (not has_data and payload.get("ok") and payload.get("has_s") is False
+            and payload.get("has_w", True)):
+        pct = float(payload.get("w") or 0.0)
+        resets_in = payload.get("wr")
+        has_data = True
 
     body: dict = {"application_name": APP_NAME, "priority": PRIORITY, "elements": []}
 

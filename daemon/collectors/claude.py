@@ -33,6 +33,7 @@ from typing import Mapping
 from . import UsageSnapshot, Window, WINDOW_5H, WINDOW_7D
 
 PRO_5H_UTIL = "anthropic-ratelimit-unified-5h-utilization"
+PRO_7D_UTIL = "anthropic-ratelimit-unified-7d-utilization"
 
 # The probe request. Anthropic has no usage endpoint -- the rate-limit headers
 # come back on any call, so the cheapest possible one is the probe.
@@ -125,16 +126,25 @@ def payload_from_headers(headers: Mapping[str, str], now: float | None = None) -
     def hdr(name: str, default: str = "0") -> str:
         return headers.get(name, default)
 
-    if headers.get(PRO_5H_UTIL):
-        return {
+    if headers.get(PRO_5H_UTIL) or headers.get(PRO_7D_UTIL):
+        payload = {
             "s": _pct(hdr(PRO_5H_UTIL)),
             "sr": _reset_minutes(hdr("anthropic-ratelimit-unified-5h-reset"), now),
-            "w": _pct(hdr("anthropic-ratelimit-unified-7d-utilization")),
+            "w": _pct(hdr(PRO_7D_UTIL)),
             "wr": _reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset"), now),
-            "st": hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
+            "st": hdr("anthropic-ratelimit-unified-5h-status",
+                      hdr("anthropic-ratelimit-unified-status", "unknown")),
             "acct": "pro",
             "ok": True,
         }
+        # Some Pro/Max accounts are now metered weekly only: no 5h-* headers
+        # at all, and /api/oauth/usage reports "five_hour": null (seen
+        # 2026-10-30). Keying the account shape on the 5h header alone sent
+        # those down the Enterprise branch as all zeroes. has_s=false makes the
+        # device show "-" for the session row instead of a fake 0%.
+        if not headers.get(PRO_5H_UTIL):
+            payload["has_s"] = False
+        return payload
 
     reset_ts = hdr("anthropic-ratelimit-unified-overage-reset")
     return {
@@ -160,7 +170,9 @@ def snapshot_from_headers(headers: Mapping[str, str],
     now = time.time() if now is None else now
     payload = payload_from_headers(headers, now)
 
-    windows = {WINDOW_5H: Window(payload["s"], resets_in=payload["sr"] * 60)}
+    windows = {}
+    if payload.get("has_s", True):
+        windows[WINDOW_5H] = Window(payload["s"], resets_in=payload["sr"] * 60)
     if payload["acct"] == "pro":
         windows[WINDOW_7D] = Window(payload["w"], resets_in=payload["wr"] * 60)
 

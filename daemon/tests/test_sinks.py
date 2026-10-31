@@ -273,3 +273,10 @@ def test_the_countdown_is_not_drawn_in_the_track_colour():
     from daemon.sinks import busybar
 
     assert _by_id(elements_for(LIVE))["reset"]["color"] != busybar.COL_TRACK
+
+
+def test_weekly_only_payload_shows_the_week_not_no_data():
+    body = _by_id(elements_for({**LIVE, "has_s": False, "s": 0, "w": 64, "wr": 120},
+                               now=1_000_000.0))
+    assert body["pct"]["text"] == "64%"
+    assert body["reset"]["timestamp"] == str(1_000_000 + 120 * 60)

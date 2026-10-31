@@ -54,6 +54,22 @@ def test_absent_headers_degrade_to_enterprise_zeroes():
     assert (p["acct"], p["s"], p["tp"], p["pd"], p["rd"]) == ("ent", 0, 0, 30, "")
 
 
+def test_weekly_only_pro_account_is_not_mistaken_for_enterprise():
+    """Seen 2026-10-30: a Max account lost its 5h window entirely -- only
+    7d-* headers come back. It must stay the Pro shape (keeping the weekly
+    number) and flag the session row absent rather than report 0%."""
+    headers = {k: v for k, v in PRO_HEADERS.items() if "-5h-" not in k}
+    headers["anthropic-ratelimit-unified-status"] = "allowed"
+    p = payload_from_headers(headers, NOW)
+    assert (p["acct"], p["w"], p["has_s"], p["st"]) == ("pro", 15, False, "allowed")
+    snap = snapshot_from_headers(headers, NOW)
+    assert WINDOW_5H not in snap.windows and snap.windows[WINDOW_7D].used_percent == 15
+
+
+def test_full_pro_account_leaves_has_s_implicit():
+    assert "has_s" not in payload_from_headers(PRO_HEADERS, NOW)
+
+
 def test_garbage_utilization_reads_as_zero():
     p = payload_from_headers({**PRO_HEADERS,
                               "anthropic-ratelimit-unified-5h-utilization": "wat"}, NOW)
