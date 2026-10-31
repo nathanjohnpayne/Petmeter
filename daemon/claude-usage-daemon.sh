@@ -483,17 +483,20 @@ build_payload_for_token() {
     chime=$(read_chime_setting)
     [ "$chime" = "on" ] && chime_fragment=",\"c\":1"
 
-    local payload
-    if [ -n "$s5h_util" ]; then
-        # Pro/Max account — 5h/7d windows
-        local s7d_util s5h_reset s7d_reset s5h_status
+    local payload s7d_util
+    s7d_util=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-7d-utilization" | tr -d '\r' | awk '{print $2}')
+    if [ -n "$s5h_util" ] || [ -n "$s7d_util" ]; then
+        # Pro/Max account — 5h/7d windows. Some accounts are now weekly-only
+        # (no 5h-* headers at all, seen 2026-10-30); they stay Pro-shaped with
+        # "has_s":false so the device shows "-" rather than a fake 0%.
+        local s5h_reset s7d_reset s5h_status has_s_fragment=""
+        [ -z "$s5h_util" ] && has_s_fragment=',"has_s":false'
         s5h_reset=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-5h-reset" | tr -d '\r' | awk '{print $2}')
-        s7d_util=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-7d-utilization" | tr -d '\r' | awk '{print $2}')
         s7d_reset=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-7d-reset" | tr -d '\r' | awk '{print $2}')
         s5h_status=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-5h-status" | tr -d '\r' | awk '{print $2}')
         s5h_util=${s5h_util:-0}; s5h_reset=${s5h_reset:-0}
         s7d_util=${s7d_util:-0}; s7d_reset=${s7d_reset:-0}
-        s5h_status=${s5h_status:-unknown}
+        s5h_status=${s5h_status:-$status}
 
         # Optional weekly scoped-model limits (today: Fable). NOT in the
         # rate-limit headers above — the scoped 7d_oi headers only appear on
@@ -529,13 +532,13 @@ build_payload_for_token() {
             [ -n "$weekly_all" ] && s7d_util=$(awk -v p="$weekly_all" 'BEGIN { printf "%.4f", p / 100 }')
         fi
 
-        payload=$(awk -v u5="$s5h_util" -v r5="$s5h_reset" -v u7="$s7d_util" -v r7="$s7d_reset" -v st="$s5h_status" -v now="$now" -v fbl="$fable_fragment" -v clk="$clock_fragment" -v chm="$chime_fragment" \
+        payload=$(awk -v u5="$s5h_util" -v r5="$s5h_reset" -v u7="$s7d_util" -v r7="$s7d_reset" -v st="$s5h_status" -v now="$now" -v fbl="$fable_fragment" -v clk="$clock_fragment" -v chm="$chime_fragment" -v hs="$has_s_fragment" \
             'BEGIN {
                 sp = sprintf("%.0f", u5 * 100);
                 sr = (r5 - now) / 60; sr = sr > 0 ? sprintf("%.0f", sr) : 0;
                 wp = sprintf("%.0f", u7 * 100);
                 wr = (r7 - now) / 60; wr = wr > 0 ? sprintf("%.0f", wr) : 0;
-                printf "{\"s\":%s,\"sr\":%s,\"w\":%s,\"wr\":%s,\"st\":\"%s\",\"acct\":\"pro\"%s%s%s,\"ok\":true}", sp, sr, wp, wr, st, fbl, clk, chm;
+                printf "{\"s\":%s,\"sr\":%s,\"w\":%s,\"wr\":%s,\"st\":\"%s\",\"acct\":\"pro\"%s%s%s%s,\"ok\":true}", sp, sr, wp, wr, st, hs, fbl, clk, chm;
             }')
     else
         # Enterprise account — spending-limit model
