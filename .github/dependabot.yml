@@ -1,0 +1,23 @@
+# Dependabot version updates. Patch and minor updates auto-merge once the
+# build checks pass (.github/workflows/dependabot-auto-merge.yml); majors
+# wait for a human.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/busybar/petmeter"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "pip"
+    directory: "/daemon"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
