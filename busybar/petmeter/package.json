@@ -15,7 +15,7 @@
   "devDependencies": {
     "@busy-app/cli": "^0.2.0",
     "typescript": "~7.0.2",
-    "vite": "8.1.4"
+    "vite": "8.1.6"
   },
   "dependencies": {
     "@busy-app/busy-lib": "^0.20.1"
