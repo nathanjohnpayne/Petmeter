@@ -49,7 +49,10 @@ const APP = manifest.id;
  * all -- it reports the host unreachable, correctly, forever. Pass a
  * comma-separated list through VITE_PETMETER_HOST to add wherever else the
  * daemon answers (`daemon/sinks/serve.py` must be bound there too), and the
- * app moves down the list each time one fails.
+ * app moves down the list each time one fails. It only waits once every
+ * address has failed in a row: with the cable out, 10.0.4.21 fails every
+ * time, and backing off after each of its failures meant the Wi-Fi address
+ * that had just come back sat behind a 10s wait it had not earned.
  *
  * A name is worth more than an address here: a LAN address comes from DHCP
  * and will eventually be someone else's.
@@ -80,8 +83,9 @@ const SELF = "http://127.0.0.1";
 // (sinks/serve.py), which is what rescues a build already installed on a bar.
 const WAIT_MS = 3_000;
 // One failed poll is not a missing host. The alert is a big claim to put on
-// screen -- it covers everything -- so it waits for a few failures in a row
-// and the last good frame stands until then.
+// screen -- it covers everything -- so it waits for a few failed rounds in a
+// row (a round is one try at every address in HOSTS) and the last good frame
+// stands until then.
 const FAILS_BEFORE_ALERT = 3;
 const RETRY_MS = 1_000;
 const RETRY_MAX_MS = 10_000;
@@ -666,7 +670,8 @@ export default function run(): void {
   let gen = -1;
   let polledAt = 0;
   let backoff = RETRY_MS;
-  let fails = 0;
+  let fails = 0;      // whole rounds failed in a row
+  let missed = 0;     // addresses failed so far in this round
   let wasPaused: boolean | null = null;
 
   const report = (err: unknown) =>
@@ -753,6 +758,7 @@ export default function run(): void {
         polledAt = Date.now();
         backoff = RETRY_MS;
         fails = 0;
+        missed = 0;
         await stopConnecting();     // the first real frame retires the caption
 
         cards = Array.isArray(data.cards) ? data.cards : [];
@@ -777,9 +783,12 @@ export default function run(): void {
         // Host asleep, unplugged, or the daemon stopped. Say which rather
         // than leaving the last good frame up to go quietly stale.
         report(err);
-        // Try the next address before concluding anything. With one host this
-        // is a no-op, so the USB-only case pays nothing for it.
+        // Try the next address at once, before concluding or waiting on
+        // anything. With one host the round is that host, so the USB-only
+        // case behaves exactly as before.
         hostAt = (hostAt + 1) % HOSTS.length;
+        if (++missed < HOSTS.length) continue;
+        missed = 0;
         if (++fails >= FAILS_BEFORE_ALERT) {
           await stopConnecting();   // so is the alert
           await draw(message("no host", null)).catch(report);
