@@ -2,7 +2,7 @@
 
 Coding-agent usage on a [BUSY Bar](https://busy.app) — a 72×16 RGB LED matrix — rotating through every quota your plans meter, each with its label and its mascot.
 
-![Petmeter on a BUSY Bar](../screenshots/busybar/card-1.png)
+![Petmeter on a BUSY Bar](../screenshots/busybar/card-2.png)
 
 Every screenshot here is the real device: captured with
 [`tools/busybar_shot.py --skin`](../tools/busybar_shot.py), which reads the
@@ -15,11 +15,11 @@ The cards rotate every four seconds, each carrying its provider's mascot.
 
 | | |
 |---|---|
-| ![Current](../screenshots/busybar/card-1.png) | **Current** — the 5-hour window |
-| ![Weekly](../screenshots/busybar/card-2.png) | **Weekly** — the 7-day window |
-| ![Fable](../screenshots/busybar/card-3.png) | **Fable** — a scoped model allowance, when the plan meters one |
-| ![Codex](../screenshots/busybar/card-4.png) | **Codex**, with Codey — the same reading for the other provider |
-| ![Reset credits](../screenshots/busybar/card-5.png) | **Resets** — the credit ledger: held solid, spent hollow |
+| ![Current](../screenshots/busybar/card-2.png) | **Current** — the 5-hour window |
+| ![Weekly](../screenshots/busybar/card-3.png) | **Weekly** — the 7-day window |
+| ![Fable](../screenshots/busybar/card-4.png) | **Fable** — a scoped model allowance, when the plan meters one |
+| ![Codex](../screenshots/busybar/card-5.png) | **Codex**, with Codey — the same reading for the other provider |
+| ![Reset credits](../screenshots/busybar/card-1.png) | **Resets** — the credit ledger: held solid, spent hollow |
 
 And the states you hope not to see:
 
