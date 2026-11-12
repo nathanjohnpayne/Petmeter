@@ -37,7 +37,7 @@ jobs:
 
       - run: pnpm typecheck
 
-      - run: pnpm build --tgz
+      - run: pnpm build --tgz-name "{id}-{version}.tgz"
 
       - name: Publish the release
         env:

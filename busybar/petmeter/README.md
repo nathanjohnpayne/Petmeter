@@ -54,10 +54,10 @@ Everything the app draws goes through the layout helpers in `@busy-app/busy-lib`
 
 | Command | What it does |
 | --- | --- |
-| `pnpm build` | builds the package into `dist/` |
+| `pnpm build` | builds the package into `dist/`, as both the folder and a `.tgz` beside it (`busy-cli build --emit both`) |
 | `pnpm build --out <path>` | builds into `<path>` instead |
-| `pnpm build --tgz` | also packs the package into a `.tgz` beside it |
-| `pnpm build --tgz-only` | packs the `.tgz` and leaves nothing else |
+| `pnpm build --tgz-name "{id}-{version}.tgz"` | names the archive; `{id}` and `{version}` come from the manifest |
+| `pnpm exec busy-cli build` | packs the `.tgz` and leaves nothing else (busy-cli's own default, `--emit tgz`) |
 | `pnpm build --no-minify` | readable output, for debugging |
 | `pnpm build --bundle` | inlines every module into one `main.js` |
 | `pnpm typecheck` | type-checks the app |
@@ -74,7 +74,7 @@ dist/
     └── images/ animations/ sounds/ resources/
 ```
 
-`--tgz` packs that folder into `dist/app.petmeter.tgz`, with the folder itself at the root of the archive.
+The `.tgz` beside it, `dist/app.petmeter.tgz` by default, packs that folder with the folder itself at the root of the archive. The folder is what `tools/busybar_install_app.py` uploads, which is why `pnpm build` keeps it.
 
 ## Manifest
 

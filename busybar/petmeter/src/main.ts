@@ -664,8 +664,13 @@ async function draw(elements: Element[]): Promise<void> {
   }
 }
 
-/** Entry point. The build rewrites the default export into a call. */
-export default function run(): void {
+/**
+ * Entry point, started by the `run()` call at the end of this file, after
+ * every module-level binding is initialized. The BUSY Bar runs main.ts
+ * rather than importing it, and busy-cli 0.4+ fails the build if the entry
+ * exports anything; it no longer rewrites a default export into a call.
+ */
+function run(): void {
   let cards: Card[] = [];
   let gen = -1;
   let polledAt = 0;
@@ -822,3 +827,5 @@ type InputEvent = {
   /** The wheel only: +1 clockwise, -1 counterclockwise. */
   delta?: number;
 };
+
+run();
