@@ -12,7 +12,7 @@ cp .env.example .env   # set VITE_BUSY_ADDR to your device's address
 pnpm build
 ```
 
-The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of letters, digits, dot and underscore. If yours still says `app.example`, change it to your own namespace before publishing.
+The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of letters, digits, dot, underscore and dash, and not starting with a dot (busy-cli checks it the way the firmware does). If yours still says `app.example`, change it to your own namespace before publishing.
 
 ## Layout
 
@@ -21,7 +21,7 @@ The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<n
 ```
 my-app/
 ├── src/                          the app
-│   ├── main.ts                   the entry point: export default function run()
+│   ├── main.ts                   the entry point: exports nothing, ends with run()
 │   ├── appmeta/
 │   │   ├── manifest.json         id, name, version
 │   │   ├── settings.json         the settings screen — optional
