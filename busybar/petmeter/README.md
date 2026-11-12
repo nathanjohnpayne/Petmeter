@@ -12,7 +12,7 @@ cp .env.example .env   # set VITE_BUSY_ADDR to your device's address
 pnpm build
 ```
 
-The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of letters, digits, dot and underscore. If yours still says `app.example`, change it to your own namespace before publishing.
+The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of letters, digits, dot, underscore and dash, and not starting with a dot (busy-cli checks it the way the firmware does). If yours still says `app.example`, change it to your own namespace before publishing.
 
 ## Layout
 
@@ -21,7 +21,7 @@ The app's id is `app.petmeter`, set in `src/appmeta/manifest.json`. An id is `<n
 ```
 my-app/
 ├── src/                          the app
-│   ├── main.ts                   the entry point: export default function run()
+│   ├── main.ts                   the entry point: exports nothing, ends with run()
 │   ├── appmeta/
 │   │   ├── manifest.json         id, name, version
 │   │   ├── settings.json         the settings screen — optional
@@ -54,10 +54,10 @@ Everything the app draws goes through the layout helpers in `@busy-app/busy-lib`
 
 | Command | What it does |
 | --- | --- |
-| `pnpm build` | builds the package into `dist/` |
+| `pnpm build` | builds the package into `dist/`, as both the folder and a `.tgz` beside it (`busy-cli build --emit both`) |
 | `pnpm build --out <path>` | builds into `<path>` instead |
-| `pnpm build --tgz` | also packs the package into a `.tgz` beside it |
-| `pnpm build --tgz-only` | packs the `.tgz` and leaves nothing else |
+| `pnpm build --tgz-name "{id}-{version}.tgz"` | names the archive; `{id}` and `{version}` come from the manifest |
+| `pnpm exec busy-cli build` | packs the `.tgz` and leaves nothing else (busy-cli's own default, `--emit tgz`) |
 | `pnpm build --no-minify` | readable output, for debugging |
 | `pnpm build --bundle` | inlines every module into one `main.js` |
 | `pnpm typecheck` | type-checks the app |
@@ -74,7 +74,7 @@ dist/
     └── images/ animations/ sounds/ resources/
 ```
 
-`--tgz` packs that folder into `dist/app.petmeter.tgz`, with the folder itself at the root of the archive.
+The `.tgz` beside it, `dist/app.petmeter.tgz` by default, packs that folder with the folder itself at the root of the archive. The folder is what `tools/busybar_install_app.py` uploads, which is why `pnpm build` keeps it.
 
 ## Manifest
 
