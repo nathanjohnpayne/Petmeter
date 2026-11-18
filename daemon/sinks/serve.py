@@ -206,6 +206,23 @@ def _query(target: str) -> dict[str, str]:
     return out
 
 
+def _reached(writer: asyncio.StreamWriter) -> str | None:
+    """The address this request arrived on, as a base URL the app can pin.
+
+    The app reaches us through a name when it can, and a name is only as good
+    as the DNS behind it. The router answers for this Mac with every address
+    it has seen it hold, live or not, and the bar takes whichever comes back:
+    one stale record in three cost each press a 5 s timeout, and a press is
+    sent once. The socket knows which of those addresses actually worked, so
+    say it, and the app talks to that one until it stops answering.
+    """
+    sock = writer.get_extra_info("sockname")
+    if not sock:
+        return None
+    addr, port = sock[0], sock[1]
+    return f"http://[{addr}]:{port}" if ":" in addr else f"http://{addr}:{port}"
+
+
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         request = await asyncio.wait_for(reader.readline(), timeout=5)
@@ -252,7 +269,8 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
                             timeout=wait_ms / 1000)
                 except asyncio.TimeoutError:
                     pass
-            body = json.dumps({**_latest, "control": control.as_dict()}).encode()
+            body = json.dumps({**_latest, "control": control.as_dict(),
+                               "host": _reached(writer)}).encode()
         else:
             body = b'{"error":"not found"}'
 
