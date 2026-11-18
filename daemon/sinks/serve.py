@@ -36,6 +36,14 @@ _retry: asyncio.Task | None = None
 # last value forever. See `start()` for who that someone usually is.
 BIND_RETRY_S = (0.5, 1.0, 2.0, 5.0)
 
+# How long to remember a press id. A retry comes at most two fetch timeouts
+# (5 s each) after its press, so the window is set by time, not by count: a
+# fast spin of the wheel can send dozens of presses inside it, and a count cap
+# would forget the one id that matters. SEEN_MAX only bounds memory against
+# a client gone wrong; no hand reaches it within SEEN_S.
+SEEN_S = 60.0
+SEEN_MAX = 4096
+
 # How long a card holds the screen when nothing is pressed, and how often the
 # rotation clock is checked.
 CARD_S = 4.0
@@ -81,6 +89,7 @@ class Control:
         self.n = 0
         self.dwell = time.monotonic()
         self._cond: asyncio.Condition | None = None
+        self._seen: dict[str, float] = {}     # press id -> when; insertion-ordered
 
     def _bump(self) -> None:
         self.gen += 1
@@ -104,6 +113,33 @@ class Control:
                 "gen": self.gen, "n": self.n}
 
     # --- the things a button does -------------------------------------
+    def press(self, action: str, press_id: str = "") -> None:
+        """Apply one forwarded button press, at most once per id.
+
+        Each press changes state before the reply is written, so a reply lost
+        on the way back does not mean the press was. The app retries a failed
+        press once with the same id; seeing it again here is that retry, and
+        applying it would undo a pause or skip two cards for one press. A
+        press without an id (an app from before ids) is always applied.
+        """
+        if press_id:
+            now = time.monotonic()
+            # Oldest first, so pruning stops at the first id still in window.
+            while self._seen:
+                oldest = next(iter(self._seen))
+                if now - self._seen[oldest] < SEEN_S and len(self._seen) < SEEN_MAX:
+                    break
+                del self._seen[oldest]
+            if press_id in self._seen:
+                return
+            self._seen[press_id] = now
+        if action == "pause":
+            self.toggle_pause()
+        elif action == "next":
+            self.step(1)
+        elif action == "prev":
+            self.step(-1)
+
     def toggle_pause(self) -> None:
         self.paused = not self.paused
         self.dwell = time.monotonic()
@@ -206,6 +242,23 @@ def _query(target: str) -> dict[str, str]:
     return out
 
 
+def _reached(writer: asyncio.StreamWriter) -> str | None:
+    """The address this request arrived on, as a base URL the app can pin.
+
+    The app reaches us through a name when it can, and a name is only as good
+    as the DNS behind it. The router answers for this Mac with every address
+    it has seen it hold, live or not, and the bar takes whichever comes back:
+    one stale record in three cost each press a 5 s timeout, and a press is
+    sent once. The socket knows which of those addresses actually worked, so
+    say it, and the app talks to that one until it stops answering.
+    """
+    sock = writer.get_extra_info("sockname")
+    if not sock:
+        return None
+    addr, port = sock[0], sock[1]
+    return f"http://[{addr}]:{port}" if ":" in addr else f"http://{addr}:{port}"
+
+
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         request = await asyncio.wait_for(reader.readline(), timeout=5)
@@ -219,13 +272,8 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
         # the app ignores it -- the screen changes when the long poll below
         # sees `gen` move, which is the same path every other change takes.
         if len(parts) >= 2 and path == CONTROL_PATH:
-            action = _query(target).get("do", "")
-            if action == "pause":
-                control.toggle_pause()
-            elif action == "next":
-                control.step(1)
-            elif action == "prev":
-                control.step(-1)
+            q = _query(target)
+            control.press(q.get("do", ""), q.get("id", ""))
             body = json.dumps(control.as_dict()).encode()
             writer.write(
                 f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -252,7 +300,8 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
                             timeout=wait_ms / 1000)
                 except asyncio.TimeoutError:
                     pass
-            body = json.dumps({**_latest, "control": control.as_dict()}).encode()
+            body = json.dumps({**_latest, "control": control.as_dict(),
+                               "host": _reached(writer)}).encode()
         else:
             body = b'{"error":"not found"}'
 

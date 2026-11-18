@@ -64,6 +64,28 @@ const HOSTS: string[] = (import.meta.env.VITE_PETMETER_HOST ??
   .filter((h: string) => h.length > 0);
 let hostAt = 0;
 
+/**
+ * THE ADDRESS THAT LAST ANSWERED, NOT THE NAME THAT FOUND IT.
+ *
+ * A name is only as good as the DNS behind it. The router answers for the
+ * Mac with every address it has seen it hold, live or not, and the bar takes
+ * whichever comes back -- one dead record in three put this app on a dead
+ * address about 10 s in every 15 (a 5 s fetch timeout, then the USB address,
+ * dead on Wi-Fi, for 5 s more). Polls survived it by moving on; presses are
+ * sent once and mostly vanished.
+ *
+ * So every poll reply carries `host`, the address the daemon saw it arrive
+ * on, and both the poll and the buttons stay there until it stops answering.
+ * Then the pin drops and HOSTS takes over again, from where it left off. An
+ * older daemon sends no `host`; the entry that answered is pinned instead,
+ * which still keeps presses off the address the rotation is busy failing on.
+ */
+let pinned: string | null = null;
+
+function base(): string {
+  return pinned ?? HOSTS[hostAt];
+}
+
 // The bar's own API, over loopback rather than 10.0.4.20. That address is the
 // bar's end of the USB link, so naming it here made the app's ability to draw
 // depend on a cable it does not otherwise need.
@@ -733,7 +755,32 @@ function run(): void {
    * why they used to be read off the CLI's `input dump` instead. That reader
    * is gone: it reads the pubsub, below this layer, so running both would
    * apply every press twice.
+   *
+   * A press goes to `base()`, where the last poll got through. If it fails
+   * anyway, the pin was stale: drop it and try once more where the rotation
+   * points. Once, because each failed try can cost a 5 s timeout, and a
+   * press that lands much later than that is no longer the press you meant.
    */
+  // Every press carries an id, and its retry carries the same one. The
+  // daemon applies a press before it replies, so a failed reply does not mean
+  // a failed press; the id lets it drop the retry of one it already applied
+  // instead of undoing a pause. The launch time keeps ids from colliding with
+  // a previous run's in the daemon's memory.
+  const launch = String(Date.now());
+  let presses = 0;
+
+  function send(action: string, id: string, retries: number): void {
+    const to = base();
+    // Read the body so the response is finished with, not left for the GC.
+    fetch(`${to}/control?do=${action}&id=${id}`)
+      .then((r) => r.text())
+      .catch((err) => {
+        report(err);
+        if (pinned === to) pinned = null;
+        if (retries > 0) send(action, id, retries - 1);
+      });
+  }
+
   function forward(event: InputEvent): void {
     let action = "";
     if (event.key === "encoder") {
@@ -743,10 +790,7 @@ function run(): void {
       else if (event.key === "ok") action = "next";
     }
     if (action === "") return;
-    // Read the body so the response is finished with, not left for the GC.
-    fetch(`${HOSTS[hostAt]}/control?do=${action}`)
-      .then((r) => r.text())
-      .catch(report);
+    send(action, `${launch}.${++presses}`, 1);
   }
 
   try {
@@ -757,13 +801,47 @@ function run(): void {
 
   async function loop(): Promise<void> {
     for (;;) {
+      // The poll and the draw fail for different reasons, so they are caught
+      // apart. Only a poll that failed says anything about the host; a draw
+      // is a POST to the bar itself, and when one timed out the old shared
+      // catch moved the app (and its buttons) off a host that was fine.
+      let data: UsageReply;
+      const to = base();
       try {
-        const url = `${HOSTS[hostAt]}/usage.json?since=${gen}&wait=${WAIT_MS}`;
-        const data = await fetch(url).then((r) => r.json());
-        polledAt = Date.now();
-        backoff = RETRY_MS;
-        fails = 0;
+        const url = `${to}/usage.json?since=${gen}&wait=${WAIT_MS}`;
+        data = asReply(await fetch(url).then((r) => r.json() as Promise<unknown>));
+      } catch (err) {
+        // Host asleep, unplugged, or the daemon stopped. Say which rather
+        // than leaving the last good frame up to go quietly stale.
+        report(err);
+        // A pin that stopped answering is dropped first, and HOSTS gets its
+        // turn at once: losing the pin is not losing the host.
+        if (pinned !== null) {
+          pinned = null;
+          continue;
+        }
+        // Try the next address at once, before concluding or waiting on
+        // anything. With one host the round is that host, so the USB-only
+        // case behaves exactly as before.
+        hostAt = (hostAt + 1) % HOSTS.length;
+        if (++missed < HOSTS.length) continue;
         missed = 0;
+        if (++fails >= FAILS_BEFORE_ALERT) {
+          await stopConnecting();   // so is the alert
+          await draw(message("no host", null)).catch(report);
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, RETRY_MAX_MS);
+        continue;
+      }
+
+      pinned = typeof data.host === "string" ? data.host : to;
+      polledAt = Date.now();
+      backoff = RETRY_MS;
+      fails = 0;
+      missed = 0;
+
+      try {
         await stopConnecting();     // the first real frame retires the caption
 
         cards = Array.isArray(data.cards) ? data.cards : [];
@@ -785,26 +863,40 @@ function run(): void {
           await draw(frame(card, remaining(card), control.paused, say));
         }
       } catch (err) {
-        // Host asleep, unplugged, or the daemon stopped. Say which rather
-        // than leaving the last good frame up to go quietly stale.
+        // The frame did not land; draw() has already scheduled a sweep. The
+        // next poll redraws, so there is nothing to retry here.
         report(err);
-        // Try the next address at once, before concluding or waiting on
-        // anything. With one host the round is that host, so the USB-only
-        // case behaves exactly as before.
-        hostAt = (hostAt + 1) % HOSTS.length;
-        if (++missed < HOSTS.length) continue;
-        missed = 0;
-        if (++fails >= FAILS_BEFORE_ALERT) {
-          await stopConnecting();   // so is the alert
-          await draw(message("no host", null)).catch(report);
-        }
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        backoff = Math.min(backoff * 2, RETRY_MAX_MS);
       }
     }
   }
 
   void clearCanvas().catch(report).then(startConnecting).then(loop).catch(report);
+}
+
+/** What `/usage.json` answers with. `host` is absent from daemons that predate
+ *  pinning; everything else is optional because the daemon sends only what it
+ *  has. */
+type UsageReply = {
+  cards?: Card[];
+  control?: { index: number; paused: boolean; gen: number };
+  host?: string;
+};
+
+/**
+ * A reply the loop can use, or a throw. Called inside the poll's catch, so a
+ * reply that parses but is not ours -- `null`, a number, a control block with
+ * no `gen` -- counts as a failed poll and moves on to the next host, instead
+ * of throwing in the frame code where nothing would restart the loop, or
+ * putting `since=undefined` on every poll so none of them waits.
+ */
+function asReply(raw: unknown): UsageReply {
+  if (raw === null || typeof raw !== "object") throw new Error("bad reply");
+  const reply = raw as UsageReply;
+  const control = reply.control;
+  if (control !== undefined && (control === null || typeof control.gen !== "number")) {
+    throw new Error("bad reply");
+  }
+  return reply;
 }
 
 /**
