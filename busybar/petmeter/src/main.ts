@@ -758,18 +758,26 @@ function run(): void {
    *
    * A press goes to `base()`, where the last poll got through. If it fails
    * anyway, the pin was stale: drop it and try once more where the rotation
-   * points. Once, because a press that lands late is still the press you
-   * meant, and one that lands twice is a pause that undoes itself.
+   * points. Once, because each failed try can cost a 5 s timeout, and a
+   * press that lands much later than that is no longer the press you meant.
    */
-  function send(action: string, retries: number): void {
+  // Every press carries an id, and its retry carries the same one. The
+  // daemon applies a press before it replies, so a failed reply does not mean
+  // a failed press; the id lets it drop the retry of one it already applied
+  // instead of undoing a pause. The launch time keeps ids from colliding with
+  // a previous run's in the daemon's memory.
+  const launch = String(Date.now());
+  let presses = 0;
+
+  function send(action: string, id: string, retries: number): void {
     const to = base();
     // Read the body so the response is finished with, not left for the GC.
-    fetch(`${to}/control?do=${action}`)
+    fetch(`${to}/control?do=${action}&id=${id}`)
       .then((r) => r.text())
       .catch((err) => {
         report(err);
         if (pinned === to) pinned = null;
-        if (retries > 0) send(action, retries - 1);
+        if (retries > 0) send(action, id, retries - 1);
       });
   }
 
@@ -782,7 +790,7 @@ function run(): void {
       else if (event.key === "ok") action = "next";
     }
     if (action === "") return;
-    send(action, 1);
+    send(action, `${launch}.${++presses}`, 1);
   }
 
   try {
@@ -797,11 +805,11 @@ function run(): void {
       // apart. Only a poll that failed says anything about the host; a draw
       // is a POST to the bar itself, and when one timed out the old shared
       // catch moved the app (and its buttons) off a host that was fine.
-      let data;
+      let data: UsageReply;
       const to = base();
       try {
         const url = `${to}/usage.json?since=${gen}&wait=${WAIT_MS}`;
-        data = await fetch(url).then((r) => r.json());
+        data = asReply(await fetch(url).then((r) => r.json() as Promise<unknown>));
       } catch (err) {
         // Host asleep, unplugged, or the daemon stopped. Say which rather
         // than leaving the last good frame up to go quietly stale.
@@ -863,6 +871,32 @@ function run(): void {
   }
 
   void clearCanvas().catch(report).then(startConnecting).then(loop).catch(report);
+}
+
+/** What `/usage.json` answers with. `host` is absent from daemons that predate
+ *  pinning; everything else is optional because the daemon sends only what it
+ *  has. */
+type UsageReply = {
+  cards?: Card[];
+  control?: { index: number; paused: boolean; gen: number };
+  host?: string;
+};
+
+/**
+ * A reply the loop can use, or a throw. Called inside the poll's catch, so a
+ * reply that parses but is not ours -- `null`, a number, a control block with
+ * no `gen` -- counts as a failed poll and moves on to the next host, instead
+ * of throwing in the frame code where nothing would restart the loop, or
+ * putting `since=undefined` on every poll so none of them waits.
+ */
+function asReply(raw: unknown): UsageReply {
+  if (raw === null || typeof raw !== "object") throw new Error("bad reply");
+  const reply = raw as UsageReply;
+  const control = reply.control;
+  if (control !== undefined && (control === null || typeof control.gen !== "number")) {
+    throw new Error("bad reply");
+  }
+  return reply;
 }
 
 /**

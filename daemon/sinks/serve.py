@@ -19,6 +19,7 @@ binding narrow is cheaper than explaining to a firewall later. Override with
 from __future__ import annotations
 
 import asyncio
+import collections
 import errno
 import json
 import time
@@ -35,6 +36,11 @@ _retry: asyncio.Task | None = None
 # Seconds between attempts to take a port someone else is holding, then the
 # last value forever. See `start()` for who that someone usually is.
 BIND_RETRY_S = (0.5, 1.0, 2.0, 5.0)
+
+# How many press ids to remember. The app retries a press once, a few seconds
+# after the first try, so the window only has to outlast that; a few dozen is
+# far more presses than anyone makes in it.
+SEEN_PRESSES = 32
 
 # How long a card holds the screen when nothing is pressed, and how often the
 # rotation clock is checked.
@@ -81,6 +87,7 @@ class Control:
         self.n = 0
         self.dwell = time.monotonic()
         self._cond: asyncio.Condition | None = None
+        self._seen: collections.deque[str] = collections.deque(maxlen=SEEN_PRESSES)
 
     def _bump(self) -> None:
         self.gen += 1
@@ -104,6 +111,26 @@ class Control:
                 "gen": self.gen, "n": self.n}
 
     # --- the things a button does -------------------------------------
+    def press(self, action: str, press_id: str = "") -> None:
+        """Apply one forwarded button press, at most once per id.
+
+        Each press changes state before the reply is written, so a reply lost
+        on the way back does not mean the press was. The app retries a failed
+        press once with the same id; seeing it again here is that retry, and
+        applying it would undo a pause or skip two cards for one press. A
+        press without an id (an app from before ids) is always applied.
+        """
+        if press_id:
+            if press_id in self._seen:
+                return
+            self._seen.append(press_id)
+        if action == "pause":
+            self.toggle_pause()
+        elif action == "next":
+            self.step(1)
+        elif action == "prev":
+            self.step(-1)
+
     def toggle_pause(self) -> None:
         self.paused = not self.paused
         self.dwell = time.monotonic()
@@ -236,13 +263,8 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
         # the app ignores it -- the screen changes when the long poll below
         # sees `gen` move, which is the same path every other change takes.
         if len(parts) >= 2 and path == CONTROL_PATH:
-            action = _query(target).get("do", "")
-            if action == "pause":
-                control.toggle_pause()
-            elif action == "next":
-                control.step(1)
-            elif action == "prev":
-                control.step(-1)
+            q = _query(target)
+            control.press(q.get("do", ""), q.get("id", ""))
             body = json.dumps(control.as_dict()).encode()
             writer.write(
                 f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"

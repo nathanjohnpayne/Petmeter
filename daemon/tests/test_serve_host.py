@@ -57,3 +57,43 @@ def test_a_long_poll_answer_names_it_too():
 
     body = asyncio.run(scenario())
     assert body["host"] == f"http://127.0.0.1:{port}"
+
+
+def test_a_retried_press_is_applied_once():
+    """The daemon applies a press before replying, so a lost reply makes the
+    app retry a press that already landed. The id it reuses is how the retry
+    is told apart from a second press."""
+    c = serve.Control()
+    c.press("pause", "1700000000000.1")
+    c.press("pause", "1700000000000.1")       # the retry
+    assert c.paused is True
+    c.press("pause", "1700000000000.2")       # the next press
+    assert c.paused is False
+
+
+def test_a_press_without_an_id_is_always_applied():
+    """An app installed before ids sends none; every press still counts."""
+    c = serve.Control()
+    c.press("pause")
+    c.press("pause")
+    assert c.paused is False
+    c.set_cards(3)
+    c.press("next")
+    c.press("next")
+    assert c.index == 2
+
+
+def test_the_control_endpoint_drops_a_repeated_id():
+    port = _free_port()
+
+    async def scenario():
+        assert await serve.start("127.0.0.1", port, log=lambda _: None) is True
+        before = serve.control.paused
+        first = await _get(port, f"{serve.CONTROL_PATH}?do=pause&id=t.1")
+        again = await _get(port, f"{serve.CONTROL_PATH}?do=pause&id=t.1")
+        return before, first, again
+
+    before, first, again = asyncio.run(scenario())
+    assert first["paused"] is (not before)
+    assert again["paused"] is first["paused"]
+    assert again["gen"] == first["gen"]
