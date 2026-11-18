@@ -97,3 +97,27 @@ def test_the_control_endpoint_drops_a_repeated_id():
     assert first["paused"] is (not before)
     assert again["paused"] is first["paused"]
     assert again["gen"] == first["gen"]
+
+
+def test_a_retry_after_a_burst_of_presses_is_still_dropped():
+    """A wheel spun fast sends many presses between a lost pause and its
+    retry. Remembering only the last few ids would forget the pause's, and
+    its retry would undo it."""
+    c = serve.Control()
+    c.set_cards(3)
+    c.press("pause", "x.0")
+    for i in range(1, 200):
+        c.press("next", f"x.{i}")
+    c.press("pause", "x.0")                   # the retry, after the burst
+    assert c.paused is True
+
+
+def test_press_ids_are_forgotten_after_the_window(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(serve.time, "monotonic", lambda: clock[0])
+    c = serve.Control()
+    c.press("pause", "y.1")
+    clock[0] += serve.SEEN_S + 1
+    c.press("pause", "y.2")                   # prunes y.1 on the way in
+    assert "y.1" not in c._seen
+    assert c.paused is False

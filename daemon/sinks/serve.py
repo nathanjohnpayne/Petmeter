@@ -19,7 +19,6 @@ binding narrow is cheaper than explaining to a firewall later. Override with
 from __future__ import annotations
 
 import asyncio
-import collections
 import errno
 import json
 import time
@@ -37,10 +36,13 @@ _retry: asyncio.Task | None = None
 # last value forever. See `start()` for who that someone usually is.
 BIND_RETRY_S = (0.5, 1.0, 2.0, 5.0)
 
-# How many press ids to remember. The app retries a press once, a few seconds
-# after the first try, so the window only has to outlast that; a few dozen is
-# far more presses than anyone makes in it.
-SEEN_PRESSES = 32
+# How long to remember a press id. A retry comes at most two fetch timeouts
+# (5 s each) after its press, so the window is set by time, not by count: a
+# fast spin of the wheel can send dozens of presses inside it, and a count cap
+# would forget the one id that matters. SEEN_MAX only bounds memory against
+# a client gone wrong; no hand reaches it within SEEN_S.
+SEEN_S = 60.0
+SEEN_MAX = 4096
 
 # How long a card holds the screen when nothing is pressed, and how often the
 # rotation clock is checked.
@@ -87,7 +89,7 @@ class Control:
         self.n = 0
         self.dwell = time.monotonic()
         self._cond: asyncio.Condition | None = None
-        self._seen: collections.deque[str] = collections.deque(maxlen=SEEN_PRESSES)
+        self._seen: dict[str, float] = {}     # press id -> when; insertion-ordered
 
     def _bump(self) -> None:
         self.gen += 1
@@ -121,9 +123,16 @@ class Control:
         press without an id (an app from before ids) is always applied.
         """
         if press_id:
+            now = time.monotonic()
+            # Oldest first, so pruning stops at the first id still in window.
+            while self._seen:
+                oldest = next(iter(self._seen))
+                if now - self._seen[oldest] < SEEN_S and len(self._seen) < SEEN_MAX:
+                    break
+                del self._seen[oldest]
             if press_id in self._seen:
                 return
-            self._seen.append(press_id)
+            self._seen[press_id] = now
         if action == "pause":
             self.toggle_pause()
         elif action == "next":
